@@ -96,7 +96,7 @@ let selectedTime = null;
 let clientName = "";
 let clientEmail = "";
 const APPOINTMENT_ENDPOINT =
-  "https://script.google.com/macros/s/AKfycbwzN7o-JuUMz-VaPidmzUMfLjcE0OdHgP3bNsXRk2wYXRa-lZHB9ERbsqFG0ZFv06LHzw/exec";
+  "https://script.google.com/macros/s/AKfycbyOoE-Jqi_cwJSXox7hXIOot7TOlLZVlQhn4feSbsFiLvr9_cEW62SPYT9FCKy3ZYnD0A/exec";
 let remoteAppointments = [];
 let remoteAppointmentsLoaded = false;
 
