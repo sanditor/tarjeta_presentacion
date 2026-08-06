@@ -1,0 +1,291 @@
+/*Estilos personalizados*/
+body {
+    font-family: "Montserrat", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background-color: #f0f4f8;
+    /* Un gris azulado muy claro para el fondo */
+}
+
+/* Contenedor principal de la tarjeta */
+.card-container {
+    width: 100%;
+    /* Ocupa el ancho completo por defecto */
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background-color: #ffffff;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15);
+}
+
+/* Media Query para pantallas más grandes (tablets, desktops) */
+@media (min-width: 450px) {
+    .card-container {
+        max-width: 420px;
+        /* Ancho máximo en pantallas grandes */
+        margin: 2rem auto;
+        /* Centrado y con margen vertical */
+        min-height: calc(100vh - 4rem);
+        border-radius: 24px;
+        /* Bordes redondeados */
+        overflow: hidden;
+        /* Asegura que el contenido respete los bordes */
+    }
+}
+
+/* Imagen de fondo principal */
+.main-bg {
+    background-image: url("https://images.unsplash.com/photo-1550751827-4bd374c3f58b?ixlib=rb-4.0.3&auto=format&fit=crop&w=1400&q=80");
+    background-size: cover;
+    background-position: center;
+    height: 200px;
+}
+
+/* Sección de contenido principal */
+.content-section {
+    background: linear-gradient(180deg, #005f73 0%, #0a9396 100%);
+    margin-top: -60px;
+    border-top-left-radius: 50px;
+    border-top-right-radius: 50px;
+    position: relative;
+    padding-bottom: 2rem;
+    flex-grow: 1;
+}
+
+/* Contenedor para la foto de perfil y el ícono de verificación */
+.profile-container {
+    position: relative;
+    width: 150px;
+    height: 150px;
+    margin-top: -105px;
+}
+
+/* Estilo de la foto de perfil */
+.profile-pic {
+    width: 100%;
+    height: 100%;
+    border: 5px solid #0a9396;
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+}
+
+/* Ícono de verificación */
+.verification-badge {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    background-color: #3b82f6;
+    /* Azul de Tailwind */
+    color: white;
+    width: 32px;
+    height: 32px;
+    border-radius: 9999px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 3px solid white;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+/* Estilo general para los botones de acción principal */
+.action-btn {
+    background-color: #ee9b00;
+    color: white;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    cursor: pointer;
+}
+
+.action-btn:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 25px rgba(238, 155, 0, 0.4);
+}
+
+/* Estilo para los botones de íconos sociales */
+.social-btn {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: white;
+    transition: all 0.3s ease;
+    cursor: pointer;
+}
+
+.social-btn:hover {
+    background-color: rgba(255, 255, 255, 0.2);
+    transform: scale(1.05);
+}
+
+/* Footer */
+.footer-banner {
+    background-color: #e9d8a6;
+    color: #001219;
+}
+
+/* --- ESTILOS PROFESIONALES PARA POPUPS --- */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 37, 46, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    opacity: 0;
+    visibility: hidden;
+    transition:
+        opacity 0.3s ease,
+        visibility 0.3s ease;
+    backdrop-filter: blur(5px);
+}
+
+.modal-overlay.active {
+    opacity: 1;
+    visibility: visible;
+}
+
+.modal-content {
+    background: #ffffff;
+    border-radius: 20px;
+    max-width: 90%;
+    width: 500px;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    transform: scale(0.95) translateY(20px);
+    transition:
+        transform 0.3s ease,
+        opacity 0.3s ease;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+    border: 5px solid #e9d8a6;
+    /* Borde del popup aumentado */
+    opacity: 0;
+}
+
+.modal-overlay.active .modal-content {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+}
+
+.modal-header {
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid #f0f4f8;
+    position: relative;
+}
+
+.modal-header-title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    text-align: center;
+    color: #005f73;
+    max-width: calc(100% - 90px);
+    /* Evita la superposición con el botón de cerrar */
+    margin: 0 auto;
+    /* Centra el título con el nuevo max-width */
+}
+
+/* Franja decorativa para los títulos */
+.modal-header-title::after {
+    content: "";
+    display: block;
+    width: 50px;
+    height: 4px;
+    background-color: #ee9b00;
+    margin: 8px auto 0;
+    border-radius: 2px;
+}
+
+.modal-body {
+    padding: 1.5rem;
+    overflow-y: auto;
+    flex-grow: 1;
+}
+
+.modal-close-btn {
+    position: absolute;
+    top: 0.75rem;
+    right: 0.75rem;
+    background: #f0f4f8;
+    color: #005f73;
+    border-radius: 99px;
+    width: 36px;
+    height: 36px;
+    cursor: pointer;
+    border: none;
+    font-size: 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+}
+
+.modal-close-btn:hover {
+    background-color: #e9d8a6;
+    transform: rotate(90deg);
+}
+
+/* Estilos para el Calendario */
+.calendar-day {
+    transition: all 0.2s ease-in-out;
+}
+
+.calendar-day:not(.disabled):hover {
+    background-color: #e9d8a6;
+    color: #001219;
+    transform: scale(1.1);
+}
+
+.calendar-day.disabled {
+    color: #cbd5e1;
+    cursor: not-allowed;
+    background-color: transparent;
+}
+
+.calendar-day.today {
+    background-color: #ee9b00;
+    color: white;
+    font-weight: bold;
+}
+
+.calendar-day.selected {
+    background-color: #005f73;
+    color: white;
+    transform: scale(1.1);
+    box-shadow: 0 0 10px rgba(0, 95, 115, 0.5);
+}
+
+.time-slot {
+    transition: all 0.2s ease-in-out;
+    border: 2px solid #f0f4f8;
+}
+
+.time-slot:hover {
+    border-color: #e9d8a6;
+    background-color: #f0f4f8;
+}
+
+.time-slot.selected {
+    background-color: #005f73;
+    color: white;
+    border-color: #005f73;
+    font-weight: 600;
+}
+
+/* Estilos del chat (Scrollbar) */
+#chat-messages::-webkit-scrollbar {
+    width: 6px;
+}
+
+#chat-messages::-webkit-scrollbar-thumb {
+    background-color: #cbd5e1;
+    border-radius: 10px;
+}
+
+#appointment-description {
+    text-align: left;
+    vertical-align: top;
+    padding: 12px;
+    line-height: 1.4;
+}
