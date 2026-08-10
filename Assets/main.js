@@ -1037,7 +1037,7 @@ const handleSend = async () => {
     // CLOUDFLARE WORKER
     // ==========================================
 
-    const AI_ENDPOINT = "https://sandor-ai.sanditor1978.workers.dev/";
+    const AI_ENDPOINT = "https://sandor-ai.sanditorl1978.workers.dev/";
 
     const response = await fetch(AI_ENDPOINT, {
       method: "POST",
