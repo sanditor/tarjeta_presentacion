@@ -292,16 +292,15 @@ const sendAppointmentToGoogleSheets = async (appointment) => {
 };
 
 const showMessage = (message, type = "success") => {
+  const existing = document.getElementById("app-message");
 
-    const existing = document.getElementById("app-message");
+  if (existing) existing.remove();
 
-    if (existing) existing.remove();
+  const div = document.createElement("div");
 
-    const div = document.createElement("div");
+  div.id = "app-message";
 
-    div.id = "app-message";
-
-    div.style.cssText = `
+  div.style.cssText = `
         position:fixed;
         bottom:20px;
         left:50%;
@@ -318,49 +317,41 @@ const showMessage = (message, type = "success") => {
         transition:.3s;
     `;
 
-    switch(type){
+  switch (type) {
+    case "error":
+      div.style.background = "#dc2626";
+      break;
 
-        case "error":
-            div.style.background="#dc2626";
-            break;
+    case "warning":
+      div.style.background = "#d97706";
+      break;
 
-        case "warning":
-            div.style.background="#d97706";
-            break;
+    case "info":
+      div.style.background = "#2563eb";
+      break;
 
-        case "info":
-            div.style.background="#2563eb";
-            break;
+    default:
+      div.style.background = "#16a34a";
+  }
 
-        default:
-            div.style.background="#16a34a";
+  div.textContent = message;
 
-    }
+  document.body.appendChild(div);
 
-    div.textContent = message;
-
-    document.body.appendChild(div);
-
-    setTimeout(()=>{
-
-        div.remove();
-
-    },3000);
-
+  setTimeout(() => {
+    div.remove();
+  }, 3000);
 };
 
 const deleteAppointment = async (appointmentId) => {
   if (!APPOINTMENT_ENDPOINT) {
     console.error("deleteAppointment: APPOINTMENT_ENDPOINT no está definido");
-    showMessage (
-      "No hay endpoint configurado para eliminar la cita.",
-      "error",
-    );
+    showMessage("No hay endpoint configurado para eliminar la cita.", "error");
     return false;
   }
   if (!appointmentId) {
     console.error("deleteAppointment: appointmentId inválido", appointmentId);
-    showMessage (
+    showMessage(
       "No se recibió un identificador válido para eliminar.",
       "error",
     );
@@ -369,7 +360,7 @@ const deleteAppointment = async (appointmentId) => {
 
   const requestUrl = `${APPOINTMENT_ENDPOINT}?action=deleteAppointment&id=${encodeURIComponent(appointmentId)}&_=${Date.now()}`;
   console.log("deleteAppointment: enviando solicitud JSONP", requestUrl);
-  showMessage ("Enviando solicitud de eliminación al backend...","warning");
+  showMessage("Enviando solicitud de eliminación al backend...", "warning");
 
   try {
     const result = await loadJsonp(requestUrl);
@@ -377,12 +368,12 @@ const deleteAppointment = async (appointmentId) => {
     const success = result && result.success === true;
 
     if (success) {
-      showMessage ("La cita fue eliminada correctamente.","success");
+      showMessage("La cita fue eliminada correctamente.", "success");
 
       return true;
     }
 
-    showMessage (
+    showMessage(
       result?.error || "El backend no pudo eliminar la cita.",
       "error",
     );
@@ -391,7 +382,7 @@ const deleteAppointment = async (appointmentId) => {
   } catch (error) {
     console.error(error);
 
-    showMessage ("Error de conexión con Google Sheets.", "error");
+    showMessage("Error de conexión con Google Sheets.", "error");
 
     return false;
   }
@@ -456,7 +447,7 @@ const renderAgendaList = (containerEl) => {
 
           renderAgendaList(containerEl);
         } else {
-          showMessage ("No se pudo eliminar la cita.","error");
+          showMessage("No se pudo eliminar la cita.", "error");
 
           button.disabled = false;
 
@@ -467,7 +458,7 @@ const renderAgendaList = (containerEl) => {
       } catch (error) {
         console.error(error);
 
-        showMessage ("Ocurrió un error eliminando la cita.", "error");
+        showMessage("Ocurrió un error eliminando la cita.", "error");
 
         button.disabled = false;
 
@@ -758,8 +749,9 @@ const confirmAppointment = async () => {
     }
 
     if (isTimeSlotTaken(selectedDate, selectedTime)) {
-      showMessage (
-        "Este horario ya está asignado. Por favor elige otro.","info"
+      showMessage(
+        "Este horario ya está asignado. Por favor elige otro.",
+        "info",
       );
       confirmBtn.disabled = false;
       confirmBtn.innerHTML = "Confirmar Cita";
@@ -794,18 +786,16 @@ const confirmAppointment = async () => {
     }
 
     if (!isValidEmail(clientEmail)) {
-
-    markFieldError(
+      markFieldError(
         emailInput,
-        "El correo electrónico no tiene un formato válido."
-    );
+        "El correo electrónico no tiene un formato válido.",
+      );
 
-    confirmBtn.disabled = false;
-    confirmBtn.innerHTML = "Confirmar Cita";
+      confirmBtn.disabled = false;
+      confirmBtn.innerHTML = "Confirmar Cita";
 
-    return;
-
-}
+      return;
+    }
 
     if (!appointmentDescription) {
       markFieldError(
@@ -832,7 +822,10 @@ const confirmAppointment = async () => {
     const saved = await sendAppointmentToGoogleSheets(appointment);
 
     if (!saved) {
-      showMessage ("No fue posible guardar la cita en Google Sheets.", "warning");
+      showMessage(
+        "No fue posible guardar la cita en Google Sheets.",
+        "warning",
+      );
 
       confirmBtn.disabled = false;
 
@@ -849,8 +842,9 @@ const confirmAppointment = async () => {
     );
 
     if (!citaExiste) {
-      showMessage (
-        "La cita no apareció en Google Sheets. Intenta nuevamente.", "info",
+      showMessage(
+        "La cita no apareció en Google Sheets. Intenta nuevamente.",
+        "info",
       );
 
       confirmBtn.disabled = false;
@@ -884,7 +878,7 @@ const confirmAppointment = async () => {
   } catch (error) {
     console.error(error);
 
-    showMessage ("Ocurrió un error inesperado.", "error");
+    showMessage("Ocurrió un error inesperado.", "error");
 
     confirmBtn.disabled = false;
     confirmBtn.innerHTML = "Confirmar Cita";
@@ -962,51 +956,139 @@ const hideTyping = () => {
 
 const handleSend = async () => {
   const text = chatInput.value.trim();
+
   if (!text) return;
 
   appendMessage(text, "user");
+
   chatInput.value = "";
+
   showTyping();
 
   try {
-    // Prompt del sistema para definir el comportamiento del LLM
-    const systemPrompt =
-      "Eres el asistente virtual amigable y profesional del Ing. Sandor Luque Farfán, especialista en mantenimiento de equipo de computo y desarrollo web a medida. Tu objetivo es responder dudas breves sobre alimentación saludable, resolver preguntas sobre los servicios y animar al usuario a agendar una cita. Servicios: Plan Personalizado, Nutrición Deportiva, Control de Peso, Nutrición Clínica. Horario: L-V 09:00 a 18:00, Sábados 10:00 a 14:00. Tono: Empático, motivador, conciso y fácil de leer (usa emojis). Nunca des diagnósticos médicos específicos, siempre sugiere evaluar el caso en consulta.";
+    const systemPrompt = `
+      Eres el asistente virtual amigable y profesional del Ing. Sandor Luque Farfán.
 
-    chatHistory.push({ role: "user", parts: [{ text: text }] });
+      Tu función es orientar a los visitantes de su Tarjeta Digital sobre sus servicios profesionales de Tecnología de la Información.
+
+      SERVICIOS PRINCIPALES:
+
+      💻 Mantenimiento de equipos de cómputo:
+      - Diagnóstico de computadores y portátiles.
+      - Mantenimiento preventivo y correctivo.
+      - Instalación y configuración de sistemas operativos.
+      - Optimización de rendimiento.
+      - Instalación y configuración de software.
+      - Diagnóstico y reemplazo de unidades de almacenamiento.
+
+      🌐 Desarrollo web:
+      - Desarrollo de páginas web.
+      - Desarrollo web a medida.
+      - Sistemas web.
+      - Aplicaciones con PHP, Laravel, JavaScript y Vue.js.
+      - Integración con bases de datos.
+      - Formularios y sistemas de agendamiento.
+
+      🛒 Soluciones digitales:
+      - Tiendas online.
+      - Tarjetas digitales.
+      - Automatización de procesos.
+      - Integración con servicios externos.
+
+      📅 AGENDAMIENTO:
+
+      Si el visitante está interesado en contratar un servicio, invítalo de manera natural a utilizar el botón "Agendar Cita" de la Tarjeta Digital.
+
+      REGLAS:
+
+      1. Responde en español.
+      2. Sé amable, profesional y conciso.
+      3. Utiliza emojis moderadamente.
+      4. No inventes precios, servicios, horarios, direcciones o información que no conozcas.
+      5. Si no conoces la respuesta, indícalo claramente.
+      6. No afirmes que una cita fue creada si el usuario no la ha realizado mediante el sistema de agendamiento.
+      7. No solicites contraseñas, claves API ni información confidencial.
+      8. Para problemas técnicos complejos, recomienda contactar directamente al Ing. Sandor.
+      9. Tu objetivo es orientar al visitante y facilitar que conozca los servicios y agende una cita.
+      `;
+
+    chatHistory.push({
+      role: "user",
+      parts: [
+        {
+          text: text,
+        },
+      ],
+    });
 
     const payload = {
       contents: chatHistory,
-      systemInstruction: { parts: [{ text: systemPrompt }] },
+
+      systemInstruction: {
+        parts: [
+          {
+            text: systemPrompt,
+          },
+        ],
+      },
     };
 
-    const apiKey = ""; // Canvas proveerá la clave automáticamente
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+    // ==========================================
+    // CLOUDFLARE WORKER
+    // ==========================================
 
-    const response = await fetch(apiUrl, {
+    const AI_ENDPOINT = "https://sandor-ai.sanditor1978.workers.dev/";
+
+    const response = await fetch(AI_ENDPOINT, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+
+      headers: {
+        "Content-Type": "application/json",
+      },
+
       body: JSON.stringify(payload),
     });
 
     const result = await response.json();
+
+    console.log("Respuesta del asistente:", result);
+
     hideTyping();
 
-    if (result.candidates && result.candidates.length > 0) {
+    if (
+      result.candidates &&
+      result.candidates.length > 0 &&
+      result.candidates[0].content &&
+      result.candidates[0].content.parts &&
+      result.candidates[0].content.parts.length > 0
+    ) {
       const reply = result.candidates[0].content.parts[0].text;
+
       appendMessage(reply, "bot");
-      chatHistory.push({ role: "model", parts: [{ text: reply }] });
+
+      chatHistory.push({
+        role: "model",
+        parts: [
+          {
+            text: reply,
+          },
+        ],
+      });
     } else {
+      console.error("Respuesta inesperada de Gemini:", result);
+
       appendMessage(
-        "Lo siento, tuve un problema al procesar tu mensaje. ¿Podrías intentar de nuevo?",
+        "Lo siento, tuve un problema al procesar tu mensaje. ¿Podrías intentarlo nuevamente?",
         "bot",
       );
     }
   } catch (error) {
-    console.error("Error al llamar a Gemini:", error);
+    console.error("Error al comunicarse con el asistente:", error);
+
     hideTyping();
+
     appendMessage(
-      "Parece que hay un problema de conexión. Inténtalo más tarde.",
+      "Parece que hay un problema de conexión con el asistente. Inténtalo nuevamente en unos momentos.",
       "bot",
     );
   }
@@ -1018,61 +1100,35 @@ chatInput.addEventListener("keypress", (e) => {
 });
 
 const markFieldError = (control, mensaje) => {
+  control.classList.remove("border-gray-300", "focus:ring-[#005f73]");
 
-    control.classList.remove(
-        "border-gray-300",
-        "focus:ring-[#005f73]"
-    );
+  control.classList.add("border-red-500", "focus:ring-red-500", "bg-red-50");
 
-    control.classList.add(
-        "border-red-500",
-        "focus:ring-red-500",
-        "bg-red-50"
-    );
+  control.focus();
 
-    control.focus();
-
-    showMessage (mensaje, "error");
-
+  showMessage(mensaje, "error");
 };
 
 const clearFieldError = (control) => {
+  control.classList.remove("border-red-500", "focus:ring-red-500", "bg-red-50");
 
-    control.classList.remove(
-        "border-red-500",
-        "focus:ring-red-500",
-        "bg-red-50"
-    );
-
-    control.classList.add(
-        "border-gray-300",
-        "focus:ring-[#005f73]"
-    );
-
+  control.classList.add("border-gray-300", "focus:ring-[#005f73]");
 };
 
 const initAppointmentValidation = () => {
+  const controls = document.querySelectorAll(
+    "#client-name-input,#client-email-input,#appointment-description",
+  );
 
-    const controls = document.querySelectorAll(
-        "#client-name-input,#client-email-input,#appointment-description"
-    );
-
-    controls.forEach(control => {
-
-        control.addEventListener("input", () => {
-
-            clearFieldError(control);
-
-        });
-
+  controls.forEach((control) => {
+    control.addEventListener("input", () => {
+      clearFieldError(control);
     });
-
+  });
 };
 
 const isValidEmail = (email) => {
+  const regex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
-    const regex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
-
-    return regex.test(email);
-
+  return regex.test(email);
 };
