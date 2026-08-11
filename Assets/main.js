@@ -215,6 +215,87 @@ const loadJsonp = (url, timeoutMs = 15000) => {
   });
 }
 
+/*const loadJsonp = (url, timeoutMs = 30000) => {
+
+    return new Promise((resolve, reject) => {
+
+        const callbackName =
+            `jsonpCallback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+
+        let finished = false;
+
+        const script = document.createElement("script");
+
+        script.type = "text/javascript";
+        script.async = true;
+
+        const cleanup = () => {
+
+            clearTimeout(timeout);
+
+            if (window[callbackName]) {
+                delete window[callbackName];
+            }
+
+            if (script.parentNode) {
+                script.parentNode.removeChild(script);
+            }
+        };
+
+        const finishSuccess = (data) => {
+
+            if (finished) return;
+
+            finished = true;
+
+            cleanup();
+
+            console.log("JSONP respuesta recibida:", data);
+
+            resolve(data);
+        };
+
+        const finishError = (message) => {
+
+            if (finished) return;
+
+            finished = true;
+
+            cleanup();
+
+            reject(new Error(message));
+        };
+
+        window[callbackName] = finishSuccess;
+
+        script.src =
+            `${url}${url.includes("?") ? "&" : "?"}callback=${callbackName}`;
+
+        script.onerror = () => {
+
+            console.error(
+                "Error cargando JSONP:",
+                script.src
+            );
+
+            finishError("JSONP load error");
+        };
+
+        const timeout = setTimeout(() => {
+
+            console.error(
+                "JSONP timeout:",
+                script.src
+            );
+
+            finishError("JSONP timeout");
+
+        }, timeoutMs);
+
+        document.body.appendChild(script);
+    });
+};*/
+
 const getAllAppointments = () => remoteAppointments;
 
 const isTimeSlotTaken = (date, time) => {
