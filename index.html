@@ -7,7 +7,10 @@
     <meta property="og:image" />
     <meta property="og:description" />
     <title>Tarjeta de Presentación Digital - Ing. Sandor Luque Farfán</title>
-    <link rel="icon" href="https://i.postimg.cc/xdVLhrDg/logo-Empresa-Sanditor.jpg" />
+    <link
+      rel="icon"
+      href="https://i.postimg.cc/xdVLhrDg/logo-Empresa-Sanditor.jpg"
+    />
     <!-- Carga de Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Carga de Google Fonts -->
@@ -22,10 +25,7 @@
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
     />
-    <link
-      rel="stylesheet"
-      href="Assets/estilos.css"  />   
-    
+    <link rel="stylesheet" href="Assets/estilos.css" />
   </head>
 
   <body class="bg-gray-200">
@@ -149,13 +149,21 @@
               <span class="text-xs mt-2 font-medium">Portafolio</span>
             </a>
             <div
+            id="opiniones-btn"
+            class="social-btn flex flex-col justify-center items-center py-3 w-full h-20 rounded-2xl"
+            >
+              <i class="fas fa-comments text-2xl"></i>
+
+              <span class="text-xs mt-2 font-medium"> Opiniones Clientes </span>
+            </div>
+            <div
               id="save-contact-btn"
               class="social-btn flex flex-col justify-center items-center py-3 w-full h-20 rounded-2xl"
             >
               <i class="fas fa-save text-2xl"></i>
               <span class="text-xs mt-2 font-medium">Guardar Contacto</span>
-            </div>
-          </div>
+            </div>  
+          </div>       
 
           <!-- Texto para instalar -->
           <div
@@ -395,6 +403,143 @@
       </div>
     </div>
 
+    <!-- POPUP / MODAL DE OPINIONES -->
+    <div id="opiniones-modal" class="modal-overlay">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 class="modal-header-title">Opiniones de Clientes</h2>
+          <button class="modal-close-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="text-center mb-6">
+            <div class="text-[#ee9b00] text-4xl mb-2">
+              <i class="fas fa-star"></i>
+            </div>
+            <h3 class="text-lg font-bold text-[#005f73]">
+              ¿Cómo fue tu experiencia?
+            </h3>
+            <p class="text-sm text-gray-500 mt-1">
+              Tu opinión nos ayuda a seguir mejorando.
+            </p>
+          </div>
+
+          <!-- FORMULARIO -->
+
+          <div class="bg-gray-50 rounded-xl p-4 mb-6 border border-gray-200">
+            <div class="mb-4">
+              <label
+                for="opinion-name"
+                class="block text-sm font-semibold text-gray-700 mb-2"
+              >
+                Tu nombre *
+              </label>
+
+              <input
+                id="opinion-name"
+                type="text"
+                maxlength="80"
+                placeholder="Escribe tu nombre"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#005f73]"
+              />
+            </div>
+
+            <div class="mb-4">
+              <label
+                for="opinion-service"
+                class="block text-sm font-semibold text-gray-700 mb-2"
+              >
+                Servicio realizado *
+              </label>
+
+              <select
+                id="opinion-service"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-[#005f73]"
+              >
+                <option value="">Selecciona un servicio</option>
+                <option value="Mantenimiento de computador">
+                  Mantenimiento de computador
+                </option>
+                <option value="Reparación de computador">
+                  Reparación de computador
+                </option>
+                <option value="Mantenimiento de impresora">
+                  Mantenimiento de impresora
+                </option>
+                <option value="Desarrollo web">Desarrollo web</option>
+                <option value="Otro">Otro</option>
+              </select>
+            </div>
+
+            <div class="mb-4">
+              <label class="block text-sm font-semibold text-gray-700 mb-2">
+                Calificación *
+              </label>
+
+              <div
+                id="opinion-stars"
+                class="flex justify-center gap-2 text-3xl text-gray-300"
+              >
+                <button type="button" data-rating="1">★</button>
+
+                <button type="button" data-rating="2">★</button>
+
+                <button type="button" data-rating="3">★</button>
+
+                <button type="button" data-rating="4">★</button>
+
+                <button type="button" data-rating="5">★</button>
+              </div>
+            </div>
+
+            <div class="mb-4">
+              <label
+                for="opinion-comment"
+                class="block text-sm font-semibold text-gray-700 mb-2"
+              >
+                Tu comentario *
+              </label>
+
+              <textarea
+                id="opinion-comment"
+                rows="4"
+                maxlength="500"
+                placeholder="Cuéntanos cómo fue tu experiencia..."
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#005f73] resize-none"
+              ></textarea>
+            </div>
+
+            <button
+              id="submit-opinion-btn"
+              class="w-full py-3 bg-[#005f73] text-white font-bold rounded-lg hover:bg-[#0a9396] transition"
+            >
+              <i class="fas fa-paper-plane mr-2"></i>
+              Enviar opinión
+            </button>
+          </div>
+
+          <!-- LISTA DE OPINIONES -->
+          <div>
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="font-bold text-[#005f73]">Opiniones recientes</h3>
+
+              <button
+                id="refresh-opiniones-btn"
+                class="text-xs text-[#005f73] hover:underline"
+              >
+                Actualizar
+              </button>
+            </div>
+
+            <div id="opiniones-list" class="space-y-3">
+              <p class="text-sm text-gray-500 text-center">
+                Cargando opiniones...
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- POPUP / MODAL DE CÓDIGO QR -->
     <div id="qr-code-modal" class="modal-overlay">
       <div class="modal-content">
@@ -482,8 +627,9 @@
                 class="bg-white border border-gray-200 text-gray-800 p-3 rounded-2xl rounded-tl-none max-w-[85%] text-sm shadow-sm"
               >
                 ¡Hola! 👋 Soy el asistente virtual del Ing. Sandor Luque Farfán
-                ¿En qué te puedo ayudar hoy sobre Mantenimiento de equipo de computo y desarrollo web a medida, nuestros servicios
-                o cómo agendar una cita?
+                ¿En qué te puedo ayudar hoy sobre Mantenimiento de equipo de
+                computo y desarrollo web a medida, nuestros servicios o cómo
+                agendar una cita?
               </div>
             </div>
           </div>

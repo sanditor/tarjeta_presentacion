@@ -62,6 +62,30 @@ if (qrCodeBtn && qrCodeModal) {
   });*/
 }
 
+// --- Lógica para el Modal de OPINIONES ---
+const opinionesBtn = document.getElementById("opiniones-btn");
+const opinionesModal = document.getElementById("opiniones-modal");
+
+if (opinionesBtn && opinionesModal) {
+  const openOpinionesModal = () => {
+    opinionesModal.classList.add("active");
+  };
+
+  const closeOpinionesModal = () => {
+    opinionesModal.classList.remove("active");
+  };
+
+  // Abrir modal
+  opinionesBtn.addEventListener("click", openOpinionesModal);
+
+  // Cerrar únicamente con el botón X
+  const closeBtn = opinionesModal.querySelector(".modal-close-btn");
+
+  if (closeBtn) {
+    closeBtn.addEventListener("click", closeOpinionesModal);
+  }
+}
+
 // --- Lógica para Guardar Contacto ---
 const saveContactBtn = document.getElementById("save-contact-btn");
 if (saveContactBtn) {
@@ -96,7 +120,8 @@ let selectedTime = null;
 let clientName = "";
 let clientEmail = "";
 const APPOINTMENT_ENDPOINT =
-  "https://script.google.com/macros/s/AKfycbw_SMHP35JQj04ydVYKt3bshpaZqW2xuKpUDEtrdpYwU4fNUkNrDeaoN09EyiBG71_-Mg/exec";
+  "https://script.google.com/macros/s/AKfycbxZdlAAKYfhQyedWgzZL_P_Sv5lEwmfheMiSEtTMiERvM744g3TfZpET6s10OKLtqu9wg/exec";
+const OPINIONS_ENDPOINT = APPOINTMENT_ENDPOINT;
 let remoteAppointments = [];
 let remoteAppointmentsLoaded = false;
 
@@ -188,7 +213,7 @@ const loadJsonp = (url, timeoutMs = 15000) => {
 
     document.body.appendChild(script);
   });
-};
+}
 
 const getAllAppointments = () => remoteAppointments;
 
@@ -290,6 +315,282 @@ const sendAppointmentToGoogleSheets = async (appointment) => {
     return false;
   }
 };
+
+//función saveOpinion
+const sendOpinionToGoogleSheets = async (opinion) => {
+
+    if (!OPINIONS_ENDPOINT) {
+        console.error("OPINIONS_ENDPOINT no está definido");
+        return false;
+    }
+
+    const params = new URLSearchParams({
+        action: "saveOpinion",
+        id: String(opinion.id),
+        name: opinion.name,
+        service: opinion.service,
+        rating: String(opinion.rating),
+        comment: opinion.comment,
+        createdAt: opinion.createdAt
+    });
+
+    const url = `${OPINIONS_ENDPOINT}?${params.toString()}`;
+
+    console.log("Enviando opinión:", url);
+
+    try {
+
+        const response = await fetch(url, {
+            method: "GET",
+            mode: "no-cors",
+            cache: "no-store"
+        });
+
+        console.log("Solicitud de opinión enviada correctamente:", response);
+
+        return true;
+
+    } catch (error) {
+
+        console.error("Error enviando opinión:", error);
+
+        return false;
+    }
+};
+//Mensaje de opiniones
+const showOpinionFeedback = (message, isError = false) => {
+
+    const existing = document.getElementById("opinion-feedback");
+
+    if (existing) {
+        existing.remove();
+    }
+
+    const feedback = document.createElement("div");
+
+    feedback.id = "opinion-feedback";
+
+    feedback.style.cssText = `
+        position: fixed;
+        bottom: 1rem;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 99999;
+        padding: 0.75rem 1rem;
+        border-radius: 0.75rem;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: #fff;
+        max-width: 90vw;
+        text-align: center;
+    `;
+
+    feedback.style.backgroundColor =
+        isError ? "#dc2626" : "#16a34a";
+
+    feedback.textContent = message;
+
+    document.body.appendChild(feedback);
+
+    setTimeout(() => {
+
+        if (feedback) {
+            feedback.remove();
+        }
+
+    }, 4000);
+};
+
+//Función que procesa el botón: Enviar opinión
+const handleSubmitOpinion = async () => {
+  const nameInput = document.getElementById("opinion-name");
+
+  const serviceInput = document.getElementById("opinion-service");
+
+  const commentInput = document.getElementById("opinion-comment");
+
+  const submitBtn = document.getElementById("submit-opinion-btn");
+
+  const name = nameInput ? nameInput.value.trim() : "";
+
+  const service = serviceInput ? serviceInput.value.trim() : "";
+
+  const comment = commentInput ? commentInput.value.trim() : "";
+
+  // Calificación seleccionada
+
+  const starsContainer = document.getElementById("opinion-stars");
+
+  const rating = starsContainer
+    ? Number(starsContainer.dataset.rating || 0)
+    : 0;
+
+  // ----------------------------
+  // VALIDAR NOMBRE
+  // ----------------------------
+
+  if (!name) {
+    markFieldError(nameInput, "Por favor ingresa tu nombre.");
+
+    return;
+  }
+
+  // ----------------------------
+  // VALIDAR SERVICIO
+  // ----------------------------
+
+  if (!service) {
+    markFieldError(serviceInput, "Selecciona el servicio realizado.");
+
+    return;
+  }
+
+  // ----------------------------
+  // VALIDAR ESTRELLAS
+  // ----------------------------
+
+  if (!rating) {
+    showOpinionFeedback(
+      "Por favor selecciona una calificación de 1 a 5 estrellas.",
+      true,
+    );
+
+    return;
+  }
+
+  // ----------------------------
+  // VALIDAR COMENTARIO
+  // ----------------------------
+
+  if (!comment) {
+    markFieldError(commentInput, "Por favor escribe tu comentario.");
+
+    return;
+  }
+
+  // ----------------------------
+  // DESACTIVAR BOTÓN
+  // ----------------------------
+
+  submitBtn.disabled = true;
+
+  submitBtn.innerHTML =
+    '<i class="fas fa-spinner fa-spin mr-2"></i> Enviando...';
+
+  const opinion = {
+    id: Date.now(),
+
+    name: name,
+
+    service: service,
+
+    rating: rating,
+
+    comment: comment,
+
+    createdAt: new Date().toISOString(),
+  };
+
+  try {
+    const saved = await sendOpinionToGoogleSheets(opinion);
+
+    if (!saved) {
+      showOpinionFeedback(
+        "No fue posible guardar tu opinión. Inténtalo nuevamente.",
+        true,
+      );
+
+      return;
+    }
+
+    // ----------------------------
+    // ÉXITO
+    // ----------------------------
+
+    showOpinionFeedback("¡Gracias! Tu opinión fue registrada correctamente.");
+
+    // Limpiar formulario
+
+    nameInput.value = "";
+
+    serviceInput.value = "";
+
+    commentInput.value = "";
+
+    //Reiniciar calificación
+    if (starsContainer) {
+      starsContainer.dataset.rating = "0";
+    }
+
+    document.querySelectorAll("#opinion-stars button").forEach((button) => {
+      button.classList.remove("text-[#ee9b00]");
+
+      button.classList.add("text-gray-300");
+    });
+
+    // Quitar selección de estrellas
+
+    document.querySelectorAll("#opinion-stars button").forEach((button) => {
+      button.dataset.selected = "false";
+
+      button.classList.remove("text-[#ee9b00]");
+
+      button.classList.add("text-gray-300");
+    });
+  } catch (error) {
+    console.error("Error procesando opinión:", error);
+
+    showDeleteFeedback("Ocurrió un error al enviar la opinión.", true);
+  } finally {
+    submitBtn.disabled = false;
+
+    submitBtn.innerHTML =
+      '<i class="fas fa-paper-plane mr-2"></i> Enviar opinión';
+  }
+};
+
+//Guarda la estrella seleccionada
+const initOpinionStars = () => {
+  const starsContainer = document.getElementById("opinion-stars");
+
+  if (!starsContainer) return;
+
+  const stars = starsContainer.querySelectorAll("button[data-rating]");
+
+  stars.forEach((star) => {
+    star.addEventListener("click", () => {
+      const rating = Number(star.dataset.rating);
+
+      // Guardamos la calificación
+      starsContainer.dataset.rating = rating;
+
+      // Pintar estrellas
+      stars.forEach((item) => {
+        const itemRating = Number(item.dataset.rating);
+
+        if (itemRating <= rating) {
+          item.classList.remove("text-gray-300");
+
+          item.classList.add("text-[#ee9b00]");
+        } else {
+          item.classList.remove("text-[#ee9b00]");
+
+          item.classList.add("text-gray-300");
+        }
+      });
+    });
+  });
+};
+
+//Ejecuta handleSubmitOpinion().
+const submitOpinionBtn = document.getElementById("submit-opinion-btn");
+
+if (submitOpinionBtn) {
+  submitOpinionBtn.addEventListener("click", handleSubmitOpinion);
+}
+
+initOpinionStars();
 
 const showMessage = (message, type = "success") => {
   const existing = document.getElementById("app-message");
