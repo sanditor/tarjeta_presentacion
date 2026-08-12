@@ -67,8 +67,32 @@ const opinionesBtn = document.getElementById("opiniones-btn");
 const opinionesModal = document.getElementById("opiniones-modal");
 
 if (opinionesBtn && opinionesModal) {
-  const openOpinionesModal = () => {
+  const openOpinionesModal = async () => {
     opinionesModal.classList.add("active");
+
+    const lista = document.getElementById("opiniones-list");
+
+    if (!lista) return;
+
+    /*
+     * Si ya tenemos datos,
+     * mostrarlos inmediatamente.
+     */
+    if (opinionesLoaded) {
+      renderOpinionesPaginationList(lista);
+
+      return;
+    }
+
+    lista.innerHTML = `
+    <p class="text-sm text-gray-500 text-center py-4">
+      Cargando opiniones...
+    </p>
+  `;
+
+    await fetchOpinionesFromSheet();
+
+    renderOpinionesPaginationList(lista);
   };
 
   const closeOpinionesModal = () => {
@@ -120,10 +144,21 @@ let selectedTime = null;
 let clientName = "";
 let clientEmail = "";
 const APPOINTMENT_ENDPOINT =
-  "https://script.google.com/macros/s/AKfycbxZdlAAKYfhQyedWgzZL_P_Sv5lEwmfheMiSEtTMiERvM744g3TfZpET6s10OKLtqu9wg/exec";
-const OPINIONS_ENDPOINT = APPOINTMENT_ENDPOINT;
+  "https://script.google.com/macros/s/AKfycbzHqk8u4P1c6Fmr4ww4_7M2nVnjBitFErpCJucJbL3_pCTyWEzHdrHJ1aMZSAj7_5a93Q/exec";
 let remoteAppointments = [];
 let remoteAppointmentsLoaded = false;
+
+// --- Opiniones ---
+let remoteOpiniones = [];
+let opinionesPage = 1;
+const OPINIONES_PER_PAGE = 3;
+
+// Control de carga y caché
+let opinionesLoaded = false;
+let opinionesLoadingPromise = null;
+
+// Evita doble envío
+let opinionSending = false;
 
 const formatDateKey = (date) => {
   const year = date.getFullYear();
@@ -181,120 +216,506 @@ const formatDisplayDateTime = (rawDate) => {
   });
 };
 
-const loadJsonp = (url, timeoutMs = 15000) => {
+//Función para la respuesta del json del backend
+const loadJsonp = (url, timeout = 25000) => {
   return new Promise((resolve, reject) => {
-    const callbackName = `jsonpCallback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+    const callbackName =
+      "jsonpCallback_" +
+      Date.now() +
+      "_" +
+      Math.random().toString(36).substring(2, 10);
+
+    const script = document.createElement("script");
+
+    let finished = false;
+
+    const separator = url.includes("?") ? "&" : "?";
+
+    script.src =
+      `${url}${separator}` +
+      `callback=${encodeURIComponent(callbackName)}` +
+      `&_jsonp=${Date.now()}`;
+
+    script.async = true;
+
+    const removeScript = () => {
+      if (script.parentNode) {
+        script.parentNode.removeChild(script);
+      }
+    };
+
+    const safeCleanupCallback = () => {
+      /*
+       * NO borrar inmediatamente.
+       *
+       * Google Apps Script puede responder tarde.
+       * Si llega después del timeout y ya borramos
+       * la función, aparecerá:
+       *
+       * callback_xxx is not defined
+       */
+
+      window[callbackName] = function () {
+        console.warn("Respuesta JSONP tardía ignorada:", callbackName);
+      };
+
+      setTimeout(() => {
+        try {
+          delete window[callbackName];
+        } catch {
+          window[callbackName] = undefined;
+        }
+      }, 60000);
+    };
+
+    const timer = setTimeout(() => {
+      if (finished) return;
+
+      finished = true;
+
+      removeScript();
+
+      safeCleanupCallback();
+
+      reject(new Error(`JSONP timeout después de ${timeout / 1000} segundos`));
+    }, timeout);
+
     window[callbackName] = (data) => {
-      cleanup();
+      if (finished) return;
+
+      finished = true;
+
+      clearTimeout(timer);
+
+      removeScript();
+
+      safeCleanupCallback();
+
       resolve(data);
     };
 
-    const script = document.createElement("script");
-    script.type = "text/javascript";
-    script.async = true;
-    script.src = `${url}&callback=${callbackName}`;
-    script.onerror = (error) => {
-      cleanup();
-      reject(new Error("JSONP load error"));
+    script.onerror = () => {
+      if (finished) return;
+
+      finished = true;
+
+      clearTimeout(timer);
+
+      removeScript();
+
+      safeCleanupCallback();
+
+      reject(new Error("Error cargando respuesta JSONP de Apps Script."));
     };
 
-    const timeout = setTimeout(() => {
-      cleanup();
-      reject(new Error("JSONP timeout"));
-    }, timeoutMs);
+    document.head.appendChild(script);
+  });
+};
 
-    function cleanup() {
-      clearTimeout(timeout);
-      if (window[callbackName]) {
-        delete window[callbackName];
+//función central para hablar con Google Apps Script
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const requestAppsScript = async (
+  url,
+  { retries = 3, timeout = 25000, useFetchFirst = true } = {},
+) => {
+  let lastError = null;
+
+  /*
+   * PRIMER INTENTO:
+   * fetch normal.
+   */
+  if (useFetchFirst) {
+    try {
+      const controller = new AbortController();
+
+      const timer = setTimeout(() => {
+        controller.abort();
+      }, timeout);
+
+      const response = await fetch(url, {
+        method: "GET",
+        cache: "no-store",
+        redirect: "follow",
+        signal: controller.signal,
+      });
+
+      clearTimeout(timer);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
       }
-      script.remove();
+
+      const result = await response.json();
+
+      console.log("Apps Script vía fetch:", result);
+
+      return result;
+    } catch (error) {
+      lastError = error;
+
+      console.warn("Fetch Apps Script falló. Probando JSONP...", error);
+    }
+  }
+
+  /*
+   * FALLBACK:
+   * JSONP con reintentos.
+   */
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      console.log(`JSONP intento ${attempt}/${retries}`);
+
+      const result = await loadJsonp(url, timeout);
+
+      console.log("Apps Script vía JSONP:", result);
+
+      return result;
+    } catch (error) {
+      lastError = error;
+
+      console.warn(`Falló JSONP intento ${attempt}:`, error);
+
+      if (attempt < retries) {
+        /*
+         * 1 segundo
+         * 2 segundos
+         * 4 segundos
+         */
+        const wait = Math.pow(2, attempt - 1) * 1000;
+
+        await sleep(wait);
+      }
+    }
+  }
+
+  throw (
+    lastError || new Error("No fue posible conectar con Google Apps Script.")
+  );
+};
+
+/*funciones para las opiniones
+Función para traer las opiniones*/
+const fetchOpinionesFromSheet = async (forceRefresh = false) => {
+  if (!APPOINTMENT_ENDPOINT) {
+    console.error("No existe APPOINTMENT_ENDPOINT.");
+
+    return remoteOpiniones;
+  }
+
+  /*
+   * Si ya hay una solicitud en proceso,
+   * utilizamos la misma Promise.
+   *
+   * No hacemos otra consulta a Google.
+   */
+  if (opinionesLoadingPromise && !forceRefresh) {
+    console.log("Ya existe una carga de opiniones en proceso.");
+
+    return opinionesLoadingPromise;
+  }
+
+  opinionesLoadingPromise = (async () => {
+    const url =
+      `${APPOINTMENT_ENDPOINT}` + `?action=getOpiniones` + `&_=${Date.now()}`;
+
+    console.log("Cargando opiniones:", url);
+
+    try {
+      const result = await requestAppsScript(url, {
+        retries: 3,
+        timeout: 25000,
+        useFetchFirst: true,
+      });
+
+      if (
+        !result ||
+        result.success !== true ||
+        !Array.isArray(result.opiniones)
+      ) {
+        throw new Error(result?.error || "Respuesta inválida de Apps Script.");
+      }
+
+      remoteOpiniones = result.opiniones.map((opinion) => ({
+        id: String(opinion.id || ""),
+
+        name: String(opinion.name || ""),
+
+        service: String(opinion.service || ""),
+
+        rating: Number(opinion.rating || 0),
+
+        comment: String(opinion.comment || ""),
+
+        createdAt: String(opinion.createdAt || ""),
+      }));
+
+      /*
+       * Más recientes primero
+       */
+      remoteOpiniones.reverse();
+
+      opinionesPage = 1;
+
+      opinionesLoaded = true;
+
+      console.log(`Opiniones cargadas: ${remoteOpiniones.length}`);
+
+      return remoteOpiniones;
+    } catch (error) {
+      console.error("Error cargando opiniones:", error);
+
+      /*
+       * MUY IMPORTANTE:
+       *
+       * Si Google falla temporalmente,
+       * NO borrar las opiniones que ya
+       * teníamos cargadas.
+       */
+      return remoteOpiniones;
+    }
+  })();
+
+  try {
+    return await opinionesLoadingPromise;
+  } finally {
+    opinionesLoadingPromise = null;
+  }
+};
+
+//Función para mostrar las opiniones
+const renderOpinionesPaginationList = (containerEl) => {
+  if (!containerEl) return;
+
+  // Si no hay opiniones
+  if (!remoteOpiniones || remoteOpiniones.length === 0) {
+    containerEl.innerHTML = `
+            <div class="text-center py-6 text-gray-500">
+
+                <i class="far fa-comment-dots text-3xl mb-2"></i>
+
+                <p>Aún no hay opiniones.</p>
+
+                <p class="text-sm mt-1">
+                    ¡Sé el primero en dejar tu opinión!
+                </p>
+
+            </div>
+        `;
+
+    // Limpiar paginación
+    const pagination = document.getElementById("opiniones-pagination");
+
+    if (pagination) {
+      pagination.innerHTML = "";
     }
 
-    document.body.appendChild(script);
+    return;
+  }
+
+  // Calcular cantidad de páginas
+  const totalPages = Math.ceil(remoteOpiniones.length / OPINIONES_PER_PAGE);
+
+  // Evitar que la página actual quede fuera de rango
+  if (opinionesPage > totalPages) {
+    opinionesPage = totalPages;
+  }
+
+  if (opinionesPage < 1) {
+    opinionesPage = 1;
+  }
+
+  // Determinar registros de la página actual
+  const start = (opinionesPage - 1) * OPINIONES_PER_PAGE;
+
+  const end = start + OPINIONES_PER_PAGE;
+
+  const opinionesPagina = remoteOpiniones.slice(start, end);
+
+  // Crear HTML de las opiniones
+  containerEl.innerHTML = opinionesPagina
+    .map((opinion) => {
+      const stars = Array.from({ length: 5 }, (_, index) => {
+        return index < opinion.rating
+          ? '<i class="fas fa-star text-[#ee9b00]"></i>'
+          : '<i class="far fa-star text-gray-300"></i>';
+      }).join("");
+
+      return `
+            <div class="border border-gray-200 rounded-xl p-4 bg-gray-50 shadow-sm">
+
+                <div class="flex items-start justify-between gap-3">
+
+                    <div>
+
+                        <h4 class="font-bold text-[#005f73]">
+                            ${escapeHtml(opinion.name || "Cliente")}
+                        </h4>
+
+                        <p class="text-xs text-gray-500 mt-1">
+                            ${escapeHtml(opinion.service || "")}
+                        </p>
+
+                    </div>
+
+                    <div class="text-sm whitespace-nowrap">
+                        ${stars}
+                    </div>
+
+                </div>
+
+                <p class="text-sm text-gray-700 mt-3 leading-relaxed">
+                    "${escapeHtml(opinion.comment || "")}"
+                </p>
+
+                <p class="text-xs text-gray-400 mt-3">
+                    ${escapeHtml(formatOpinionDate(opinion.createdAt) || "")}
+                </p>
+
+            </div>
+        `;
+    })
+    .join("");
+
+  // Dibujar paginación
+  renderOpinionesPaginationPagination(totalPages);
+};
+
+//función para formatear la fecha
+const formatOpinionDate = (rawDate) => {
+  if (!rawDate) return "";
+
+  const date = new Date(rawDate);
+
+  if (isNaN(date.getTime())) {
+    return rawDate;
+  }
+
+  return date.toLocaleString("es-CO", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: "America/Bogota",
+  });
+};
+
+//Función para protección para los comentarios
+const escapeHtml = (value) => {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+};
+
+//Paginación de las opiniones
+const renderOpinionesPaginationPagination = (totalPaginas) => {
+  const pagination = document.getElementById("opiniones-pagination");
+
+  if (!pagination) return;
+
+  if (totalPaginas <= 1) {
+    pagination.innerHTML = "";
+    return;
+  }
+
+  pagination.innerHTML = `
+
+        <button
+            id="opiniones-prev-btn"
+            type="button"
+            class="px-3 py-2 rounded-lg border border-gray-300 text-sm font-semibold
+            ${
+              opinionesPage === 1
+                ? "text-gray-300 cursor-not-allowed"
+                : "text-[#005f73] hover:bg-gray-100"
+            }"
+            ${opinionesPage === 1 ? "disabled" : ""}
+        >
+            ← Anterior
+        </button>
+
+        <span class="text-sm font-semibold text-gray-600">
+            Página ${opinionesPage} de ${totalPaginas}
+        </span>
+
+        <button
+            id="opiniones-next-btn"
+            type="button"
+            class="px-3 py-2 rounded-lg border border-gray-300 text-sm font-semibold
+            ${
+              opinionesPage === totalPaginas
+                ? "text-gray-300 cursor-not-allowed"
+                : "text-[#005f73] hover:bg-gray-100"
+            }"
+            ${opinionesPage === totalPaginas ? "disabled" : ""}
+        >
+            Siguiente →
+        </button>
+    `;
+
+  const prevBtn = document.getElementById("opiniones-prev-btn");
+  const nextBtn = document.getElementById("opiniones-next-btn");
+
+  if (prevBtn) {
+    prevBtn.addEventListener("click", () => {
+      if (opinionesPage <= 1) return;
+
+      opinionesPage--;
+
+      const lista = document.getElementById("opiniones-list");
+
+      if (lista) {
+        renderOpinionesPaginationList(lista);
+      }
+    });
+  }
+
+  if (nextBtn) {
+    nextBtn.addEventListener("click", () => {
+      if (opinionesPage >= totalPaginas) return;
+
+      opinionesPage++;
+
+      const lista = document.getElementById("opiniones-list");
+
+      if (lista) {
+        renderOpinionesPaginationList(lista);
+      }
+    });
+  }
+};
+
+//Función para el botón de actualizar
+const refreshOpinionesBtn = document.getElementById("refresh-opiniones-btn");
+
+if (refreshOpinionesBtn) {
+  refreshOpinionesBtn.addEventListener("click", async () => {
+    const lista = document.getElementById("opiniones-list");
+
+    if (!lista) return;
+
+    refreshOpinionesBtn.disabled = true;
+
+    refreshOpinionesBtn.textContent = "Actualizando...";
+
+    try {
+      await fetchOpinionesFromSheet(true);
+
+      renderOpinionesPaginationList(lista);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      refreshOpinionesBtn.disabled = false;
+
+      refreshOpinionesBtn.textContent = "Actualizar";
+    }
   });
 }
-
-/*const loadJsonp = (url, timeoutMs = 30000) => {
-
-    return new Promise((resolve, reject) => {
-
-        const callbackName =
-            `jsonpCallback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
-
-        let finished = false;
-
-        const script = document.createElement("script");
-
-        script.type = "text/javascript";
-        script.async = true;
-
-        const cleanup = () => {
-
-            clearTimeout(timeout);
-
-            if (window[callbackName]) {
-                delete window[callbackName];
-            }
-
-            if (script.parentNode) {
-                script.parentNode.removeChild(script);
-            }
-        };
-
-        const finishSuccess = (data) => {
-
-            if (finished) return;
-
-            finished = true;
-
-            cleanup();
-
-            console.log("JSONP respuesta recibida:", data);
-
-            resolve(data);
-        };
-
-        const finishError = (message) => {
-
-            if (finished) return;
-
-            finished = true;
-
-            cleanup();
-
-            reject(new Error(message));
-        };
-
-        window[callbackName] = finishSuccess;
-
-        script.src =
-            `${url}${url.includes("?") ? "&" : "?"}callback=${callbackName}`;
-
-        script.onerror = () => {
-
-            console.error(
-                "Error cargando JSONP:",
-                script.src
-            );
-
-            finishError("JSONP load error");
-        };
-
-        const timeout = setTimeout(() => {
-
-            console.error(
-                "JSONP timeout:",
-                script.src
-            );
-
-            finishError("JSONP timeout");
-
-        }, timeoutMs);
-
-        document.body.appendChild(script);
-    });
-};*/
 
 const getAllAppointments = () => remoteAppointments;
 
@@ -399,59 +820,84 @@ const sendAppointmentToGoogleSheets = async (appointment) => {
 
 //función saveOpinion
 const sendOpinionToGoogleSheets = async (opinion) => {
+  if (!APPOINTMENT_ENDPOINT) {
+    return {
+      success: false,
+      error: "Endpoint no configurado",
+    };
+  }
 
-    if (!OPINIONS_ENDPOINT) {
-        console.error("OPINIONS_ENDPOINT no está definido");
-        return false;
-    }
+  const params = new URLSearchParams({
+    action: "saveOpinion",
 
-    const params = new URLSearchParams({
-        action: "saveOpinion",
-        id: String(opinion.id),
-        name: opinion.name,
-        service: opinion.service,
-        rating: String(opinion.rating),
-        comment: opinion.comment,
-        createdAt: opinion.createdAt
+    id: String(opinion.id),
+
+    name: opinion.name,
+
+    service: opinion.service,
+
+    rating: String(opinion.rating),
+
+    comment: opinion.comment,
+
+    createdAt: opinion.createdAt,
+
+    _: String(Date.now()),
+  });
+
+  const url = `${APPOINTMENT_ENDPOINT}` + `?${params.toString()}`;
+
+  console.log("Guardando opinión:", url);
+
+  try {
+    /*
+     * IMPORTANTE:
+     *
+     * El mismo ID viaja en todos los
+     * reintentos.
+     *
+     * Tu Apps Script debe impedir
+     * duplicados por ese ID.
+     */
+    const result = await requestAppsScript(url, {
+      retries: 3,
+      timeout: 30000,
+      useFetchFirst: true,
     });
 
-    const url = `${OPINIONS_ENDPOINT}?${params.toString()}`;
+    if (!result || result.success !== true) {
+      return {
+        success: false,
 
-    console.log("Enviando opinión:", url);
-
-    try {
-
-        const response = await fetch(url, {
-            method: "GET",
-            mode: "no-cors",
-            cache: "no-store"
-        });
-
-        console.log("Solicitud de opinión enviada correctamente:", response);
-
-        return true;
-
-    } catch (error) {
-
-        console.error("Error enviando opinión:", error);
-
-        return false;
+        error: result?.error || "No fue posible guardar la opinión.",
+      };
     }
+
+    return result;
+  } catch (error) {
+    console.error("Error definitivo guardando opinión:", error);
+
+    return {
+      success: false,
+
+      error: "No fue posible comunicarse con el servidor. Intenta nuevamente.",
+    };
+  }
 };
+
 //Mensaje de opiniones
 const showOpinionFeedback = (message, isError = false) => {
+  const existing = document.getElementById("opinion-feedback");
 
-    const existing = document.getElementById("opinion-feedback");
+  if (existing) {
+    existing.remove();
+  }
 
-    if (existing) {
-        existing.remove();
-    }
+  const feedback = document.createElement("div");
 
-    const feedback = document.createElement("div");
+  feedback.id = "opinion-feedback";
 
-    feedback.id = "opinion-feedback";
-
-    feedback.style.cssText = `
+  feedback.style.cssText = `
         position: fixed;
         bottom: 1rem;
         left: 50%;
@@ -467,24 +913,28 @@ const showOpinionFeedback = (message, isError = false) => {
         text-align: center;
     `;
 
-    feedback.style.backgroundColor =
-        isError ? "#dc2626" : "#16a34a";
+  feedback.style.backgroundColor = isError ? "#dc2626" : "#16a34a";
 
-    feedback.textContent = message;
+  feedback.textContent = message;
 
-    document.body.appendChild(feedback);
+  document.body.appendChild(feedback);
 
-    setTimeout(() => {
-
-        if (feedback) {
-            feedback.remove();
-        }
-
-    }, 4000);
+  setTimeout(() => {
+    if (feedback) {
+      feedback.remove();
+    }
+  }, 4000);
 };
 
 //Función que procesa el botón: Enviar opinión
 const handleSubmitOpinion = async () => {
+  // Protección adicional contra doble clic
+  if (opinionSending) {
+    console.warn("Ya existe una opinión en proceso de envío.");
+
+    return;
+  }
+
   const nameInput = document.getElementById("opinion-name");
 
   const serviceInput = document.getElementById("opinion-service");
@@ -493,23 +943,29 @@ const handleSubmitOpinion = async () => {
 
   const submitBtn = document.getElementById("submit-opinion-btn");
 
-  const name = nameInput ? nameInput.value.trim() : "";
-
-  const service = serviceInput ? serviceInput.value.trim() : "";
-
-  const comment = commentInput ? commentInput.value.trim() : "";
-
-  // Calificación seleccionada
-
   const starsContainer = document.getElementById("opinion-stars");
 
-  const rating = starsContainer
-    ? Number(starsContainer.dataset.rating || 0)
-    : 0;
+  if (
+    !nameInput ||
+    !serviceInput ||
+    !commentInput ||
+    !submitBtn ||
+    !starsContainer
+  ) {
+    console.error("No se encontraron todos los elementos del formulario.");
 
-  // ----------------------------
-  // VALIDAR NOMBRE
-  // ----------------------------
+    return;
+  }
+
+  const name = nameInput.value.trim();
+  const service = serviceInput.value.trim();
+  const comment = commentInput.value.trim();
+
+  const rating = Number(starsContainer.dataset.rating || 0);
+
+  // -------------------------
+  // VALIDACIONES
+  // -------------------------
 
   if (!name) {
     markFieldError(nameInput, "Por favor ingresa tu nombre.");
@@ -517,19 +973,11 @@ const handleSubmitOpinion = async () => {
     return;
   }
 
-  // ----------------------------
-  // VALIDAR SERVICIO
-  // ----------------------------
-
   if (!service) {
     markFieldError(serviceInput, "Selecciona el servicio realizado.");
 
     return;
   }
-
-  // ----------------------------
-  // VALIDAR ESTRELLAS
-  // ----------------------------
 
   if (!rating) {
     showOpinionFeedback(
@@ -540,77 +988,73 @@ const handleSubmitOpinion = async () => {
     return;
   }
 
-  // ----------------------------
-  // VALIDAR COMENTARIO
-  // ----------------------------
-
   if (!comment) {
     markFieldError(commentInput, "Por favor escribe tu comentario.");
 
     return;
   }
 
-  // ----------------------------
-  // DESACTIVAR BOTÓN
-  // ----------------------------
+  // -------------------------
+  // BLOQUEAR ENVÍO
+  // -------------------------
+
+  opinionSending = true;
 
   submitBtn.disabled = true;
 
+  submitBtn.style.pointerEvents = "none";
+
   submitBtn.innerHTML =
-    '<i class="fas fa-spinner fa-spin mr-2"></i> Enviando...';
+    '<i class="fas fa-spinner fa-spin mr-2"></i> Guardando opinión...';
 
+  /*
+   * ID creado una sola vez.
+   *
+   * Este mismo ID debe ser utilizado por
+   * Apps Script para impedir duplicados.
+   */
   const opinion = {
-    id: Date.now(),
+    id: Date.now() + "-" + Math.random().toString(36).substring(2, 10),
 
-    name: name,
-
-    service: service,
-
-    rating: rating,
-
-    comment: comment,
+    name,
+    service,
+    rating,
+    comment,
 
     createdAt: new Date().toISOString(),
   };
 
   try {
-    const saved = await sendOpinionToGoogleSheets(opinion);
+    const result = await sendOpinionToGoogleSheets(opinion);
 
-    if (!saved) {
+    if (!result.success) {
       showOpinionFeedback(
-        "No fue posible guardar tu opinión. Inténtalo nuevamente.",
+        result.error ||
+          "No fue posible guardar tu opinión. Inténtalo nuevamente.",
         true,
       );
 
       return;
     }
 
-    // ----------------------------
-    // ÉXITO
-    // ----------------------------
+    // -------------------------
+    // GUARDADO CONFIRMADO
+    // -------------------------
 
-    showOpinionFeedback("¡Gracias! Tu opinión fue registrada correctamente.");
+    showOpinionFeedback(
+      result.duplicate
+        ? "Esta opinión ya había sido registrada."
+        : "¡Gracias! Tu opinión fue registrada correctamente.",
+    );
 
-    // Limpiar formulario
+    // Limpiar formulario solamente
+    // cuando Apps Script confirmó el guardado.
 
     nameInput.value = "";
-
     serviceInput.value = "";
-
     commentInput.value = "";
 
-    //Reiniciar calificación
-    if (starsContainer) {
-      starsContainer.dataset.rating = "0";
-    }
-
-    document.querySelectorAll("#opinion-stars button").forEach((button) => {
-      button.classList.remove("text-[#ee9b00]");
-
-      button.classList.add("text-gray-300");
-    });
-
-    // Quitar selección de estrellas
+    starsContainer.dataset.rating = "0";
 
     document.querySelectorAll("#opinion-stars button").forEach((button) => {
       button.dataset.selected = "false";
@@ -619,19 +1063,47 @@ const handleSubmitOpinion = async () => {
 
       button.classList.add("text-gray-300");
     });
+
+    // -------------------------
+    // ACTUALIZAR OPINIONES
+    // -------------------------
+
+    const lista = document.getElementById("opiniones-list");
+
+    if (lista) {
+      lista.innerHTML = `
+        <p class="text-sm text-gray-500 text-center py-4">
+          Actualizando opiniones...
+        </p>
+      `;
+
+      await fetchOpinionesFromSheet(true);
+
+      renderOpinionesPaginationList(lista);
+    }
   } catch (error) {
     console.error("Error procesando opinión:", error);
 
-    showDeleteFeedback("Ocurrió un error al enviar la opinión.", true);
+    showOpinionFeedback("Ocurrió un error al enviar la opinión.", true);
   } finally {
+    opinionSending = false;
+
     submitBtn.disabled = false;
+
+    submitBtn.style.pointerEvents = "";
 
     submitBtn.innerHTML =
       '<i class="fas fa-paper-plane mr-2"></i> Enviar opinión';
   }
 };
 
-//Guarda la estrella seleccionada
+//Ejecuta handleSubmitOpinion().
+const submitOpinionBtn = document.getElementById("submit-opinion-btn");
+
+if (submitOpinionBtn) {
+  submitOpinionBtn.addEventListener("click", handleSubmitOpinion);
+}
+
 const initOpinionStars = () => {
   const starsContainer = document.getElementById("opinion-stars");
 
@@ -643,20 +1115,18 @@ const initOpinionStars = () => {
     star.addEventListener("click", () => {
       const rating = Number(star.dataset.rating);
 
-      // Guardamos la calificación
-      starsContainer.dataset.rating = rating;
+      // Guardar la calificación seleccionada
+      starsContainer.dataset.rating = String(rating);
 
-      // Pintar estrellas
+      // Pintar las estrellas seleccionadas
       stars.forEach((item) => {
         const itemRating = Number(item.dataset.rating);
 
         if (itemRating <= rating) {
           item.classList.remove("text-gray-300");
-
           item.classList.add("text-[#ee9b00]");
         } else {
           item.classList.remove("text-[#ee9b00]");
-
           item.classList.add("text-gray-300");
         }
       });
@@ -664,13 +1134,7 @@ const initOpinionStars = () => {
   });
 };
 
-//Ejecuta handleSubmitOpinion().
-const submitOpinionBtn = document.getElementById("submit-opinion-btn");
-
-if (submitOpinionBtn) {
-  submitOpinionBtn.addEventListener("click", handleSubmitOpinion);
-}
-
+// Inicializar las estrellas
 initOpinionStars();
 
 const showMessage = (message, type = "success") => {

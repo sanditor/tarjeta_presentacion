@@ -14,6 +14,7 @@ Pasos para crear un Web App en Google Apps Script:
 
 const SHEET_ID = "1DfzxZCJrruEcPZ52V00vSx8uU1YQ09TC38IrihbJK68";
 const SHEET_NAME = "Citas";
+const OPINIONES_SHEET_NAME = 'Opiniones';
 
 function getSheet() {
   const ss = SpreadsheetApp.openById(SHEET_ID);
@@ -41,6 +42,32 @@ function getSheet() {
   return sheet;
 }
 
+function getOpinionesSheet() {
+
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+
+  let sheet = ss.getSheetByName(OPINIONES_SHEET_NAME);
+
+  if (!sheet) {
+    sheet = ss.insertSheet(OPINIONES_SHEET_NAME);
+  }
+
+  const headers = [
+    'id',
+    'name',
+    'service',
+    'rating',
+    'comment',
+    'createdAt'
+  ];
+
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(headers);
+  }
+
+  return sheet;
+}
+
 function doGet(e) {
   const params = e.parameter || {};
   const action = params.action || "";
@@ -55,6 +82,12 @@ function doGet(e) {
 
     case "deleteAppointment":
       return deleteAppointment(params.id, callback);
+    
+    case "getOpiniones":
+      return getOpiniones(callback);
+
+    case "saveOpinion":
+      return saveOpinion(params, callback);
 
     default:
       return buildResponse(
@@ -231,7 +264,7 @@ function sendAppointmentEmails(params) {
         <div style="text-align:center;margin-top:30px;">
 
           <a
-            href="https://sanditor.github.io/tarjetaPresentacion/"
+            href="https://sanditor.github.io/tarjeta_presentacion/"
             style="
               background:#005f73;
               color:white;
@@ -430,4 +463,219 @@ function buildResponse(obj, callback) {
       ? ContentService.MimeType.JAVASCRIPT
       : ContentService.MimeType.JSON,
   );
+}
+
+function getOpiniones(callback) {
+
+  const sheet = getOpinionesSheet();
+
+  const values = sheet.getDataRange().getValues();
+
+  if (values.length <= 1) {
+
+    return buildResponse({
+      success: true,
+      opiniones: []
+    }, callback);
+
+  }
+
+  const headers = values[0];
+
+  const opiniones = values.slice(1).map(row => {
+
+    let obj = {};
+
+    headers.forEach((header, index) => {
+
+      obj[header] = row[index];
+
+    });
+
+    return obj;
+
+  });
+
+  return buildResponse({
+    success: true,
+    opiniones: opiniones
+  }, callback);
+
+}
+
+function saveOpinion(params, callback) {
+
+  const lock = LockService.getScriptLock();
+
+  try {
+
+    /*
+     * Evita que dos solicitudes simultáneas
+     * escriban al mismo tiempo.
+     */
+    lock.waitLock(10000);
+
+    const sheet = getOpinionesSheet();
+
+    const id =
+      String(params.id || "").trim();
+
+    const name =
+      String(params.name || "").trim();
+
+    const service =
+      String(params.service || "").trim();
+
+    const rating =
+      String(params.rating || "").trim();
+
+    const comment =
+      String(params.comment || "").trim();
+
+    // ==========================
+    // VALIDACIONES
+    // ==========================
+
+    if (
+      !id ||
+      !name ||
+      !service ||
+      !rating ||
+      !comment
+    ) {
+
+      return buildResponse(
+        {
+          success: false,
+          error:
+            "Todos los campos son obligatorios."
+        },
+        callback
+      );
+    }
+
+    const ratingNumber =
+      Number(rating);
+
+    if (
+      !Number.isInteger(ratingNumber) ||
+      ratingNumber < 1 ||
+      ratingNumber > 5
+    ) {
+
+      return buildResponse(
+        {
+          success: false,
+          error:
+            "La calificación debe estar entre 1 y 5."
+        },
+        callback
+      );
+    }
+
+    // ==========================
+    // CONTROL DE DUPLICADOS
+    // ==========================
+
+    const lastRow =
+      sheet.getLastRow();
+
+    if (lastRow > 1) {
+
+      const existingIds =
+        sheet
+          .getRange(
+            2,
+            1,
+            lastRow - 1,
+            1
+          )
+          .getDisplayValues();
+
+      const alreadyExists =
+        existingIds.some(
+          (row) =>
+            String(row[0]) === id
+        );
+
+      /*
+       * La solicitud ya fue procesada.
+       *
+       * Respondemos success true para que
+       * el frontend no intente enviarla
+       * nuevamente.
+       */
+      if (alreadyExists) {
+
+        return buildResponse(
+          {
+            success: true,
+            duplicate: true,
+            id: id
+          },
+          callback
+        );
+      }
+    }
+
+    // ==========================
+    // GUARDAR
+    // ==========================
+
+    const createdAt =
+      Utilities.formatDate(
+        new Date(),
+        Session.getScriptTimeZone(),
+        "dd/MM/yyyy HH:mm:ss"
+      );
+
+    sheet.appendRow([
+      id,
+      name,
+      service,
+      ratingNumber,
+      comment,
+      createdAt
+    ]);
+
+    SpreadsheetApp.flush();
+
+    return buildResponse(
+      {
+        success: true,
+        duplicate: false,
+        id: id
+      },
+      callback
+    );
+
+  } catch (error) {
+
+    console.error(
+      "saveOpinion:",
+      error
+    );
+
+    return buildResponse(
+      {
+        success: false,
+        error:
+          error.message ||
+          "Error guardando la opinión."
+      },
+      callback
+    );
+
+  } finally {
+
+    /*
+     * Liberar LockService solamente
+     * si realmente obtuvimos el lock.
+     */
+    try {
+      lock.releaseLock();
+    } catch (error) {
+      // No hacer nada
+    }
+  }
 }
