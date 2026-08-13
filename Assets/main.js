@@ -144,7 +144,7 @@ let selectedTime = null;
 let clientName = "";
 let clientEmail = "";
 const APPOINTMENT_ENDPOINT =
-  "https://script.google.com/macros/s/AKfycbzzBHZYXHDBmRRo1z5EPnVyryv4JiTsu9avCLB5wn5efnJ_AUYywWo_-3eOxATnqFmA6Q/exec";
+  "https://script.google.com/macros/s/AKfycbyaizK3MM-P-4Yq8NklxY3Klkvpk1el0a56QeeDOLe9A0jtwkcivalQLli5b2as-f9-2g/exec";
 
 // ---Agendador---
 let remoteAppointments = [];
