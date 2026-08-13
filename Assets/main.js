@@ -145,7 +145,7 @@ let clientName = "";
 let clientEmail = "";
 let appointmentSending = false;
 const APPOINTMENT_ENDPOINT =
-  "https://script.google.com/macros/s/AKfycbxwVoekSwczuJINtP4JR7wtT5nRezRi8Sph3RIn52VXKscbslfG6TUDzQLTP1BNuC6d8A/exec";
+  "https://script.google.com/macros/s/AKfycbyCnBmvkcEL3-Al96_NJD-8hd8AXZ_GAfviZvjfc2cJi10bMC2UielK20wt_FjLYWECtg/exec";
 
 // ---Agendador---
 let remoteAppointments = [];
@@ -1321,7 +1321,8 @@ const showMessage = (message, type = "success") => {
   }, 3000);
 };
 
-const deleteAppointment = async (appointmentId) => {
+//Función àra borrar una cita agendada teniendo en cuenta localStorage o desde la URL
+const deleteAppointment = async (appointmentId, suppliedToken = "") => {
   if (!APPOINTMENT_ENDPOINT) {
     showMessage("No hay endpoint configurado.", "error");
 
@@ -1334,11 +1335,20 @@ const deleteAppointment = async (appointmentId) => {
     return false;
   }
 
-  // Buscar el token secreto
-  const deleteToken = getAppointmentDeleteToken(appointmentId);
+  // =========================================
+  // OBTENER TOKEN
+  // =========================================
+  //
+  // Puede venir:
+  //
+  // 1. Desde el enlace del correo.
+  // 2. Desde localStorage.
+  // =========================================
 
-  // Si este navegador no creó la cita,
-  // no puede eliminarla.
+  const deleteToken =
+    String(suppliedToken || "").trim() ||
+    getAppointmentDeleteToken(appointmentId);
+
   if (!deleteToken) {
     showMessage("No tienes autorización para eliminar esta cita.", "error");
 
@@ -1357,35 +1367,195 @@ const deleteAppointment = async (appointmentId) => {
 
   const requestUrl = `${APPOINTMENT_ENDPOINT}?${params.toString()}`;
 
-  showMessage("Eliminando tu cita...", "warning");
+  showMessage("Cancelando tu cita...", "warning");
 
   try {
     const result = await requestAppsScript(requestUrl, {
       retries: 2,
-      timeout: 15000,
+      timeout: 20000,
       useFetchFirst: false,
     });
 
+    console.log("Resultado cancelar cita:", result);
+
     if (result && result.success === true) {
-      // Ya no necesitamos el token
+      /*
+       * Si este navegador también tenía
+       * guardado el token, lo eliminamos.
+       */
       removeAppointmentDeleteToken(appointmentId);
 
-      showMessage("Tu cita fue eliminada correctamente.", "success");
+      showMessage("Tu cita fue cancelada correctamente.", "success");
 
       return true;
     }
 
-    showMessage(result?.error || "No fue posible eliminar la cita.", "error");
+    showMessage(result?.error || "No fue posible cancelar la cita.", "error");
 
     return false;
   } catch (error) {
-    console.error("Error eliminando cita:", error);
+    console.error("Error cancelando cita:", error);
 
     showMessage("Error de conexión con el servidor.", "error");
 
     return false;
   }
 };
+
+//Funcion
+const handleAppointmentCancellationFromUrl = async () => {
+  const urlParams = new URLSearchParams(window.location.search);
+
+  const appointmentId = String(urlParams.get("cancelAppointment") || "").trim();
+
+  const deleteToken = String(urlParams.get("token") || "").trim();
+
+  // =========================================
+  // NO ES UN ENLACE DE CANCELACIÓN
+  // =========================================
+
+  if (!appointmentId || !deleteToken) {
+    return;
+  }
+
+  console.log("Solicitud de cancelación detectada:", appointmentId);
+
+  // =========================================
+  // CONFIRMACIÓN DEL USUARIO
+  // =========================================
+
+  const confirmed = window.confirm("¿Deseas cancelar esta cita?");
+
+  if (!confirmed) {
+    /*
+     * Quitamos los parámetros sensibles
+     * de la barra del navegador.
+     */
+    cleanAppointmentCancellationUrl();
+
+    return;
+  }
+
+  // =========================================
+  // CANCELAR
+  // =========================================
+
+  const success = await deleteAppointment(appointmentId, deleteToken);
+
+  // =========================================
+  // LIMPIAR URL
+  // =========================================
+
+  cleanAppointmentCancellationUrl();
+
+  if (success) {
+    /*
+     * Actualizar agenda local.
+     */
+    try {
+      await fetchAppointmentsFromSheet(true);
+    } catch (error) {
+      console.warn(
+        "No se pudo actualizar la agenda después de cancelar:",
+        error,
+      );
+    }
+
+    showCancellationSuccessModal();
+  }
+};
+
+//Función para limpiar el token de la URL
+const cleanAppointmentCancellationUrl = () => {
+  try {
+    const cleanUrl = window.location.origin + window.location.pathname;
+
+    window.history.replaceState({}, document.title, cleanUrl);
+  } catch (error) {
+    console.warn("No fue posible limpiar la URL:", error);
+  }
+};
+
+//Función para mostrar el modal de éxito al cancelar una cita 
+const showCancellationSuccessModal = () => {
+  if (!agendarModal) {
+    showMessage("Tu cita fue cancelada correctamente.", "success");
+
+    return;
+  }
+
+  const modalContent = agendarModal.querySelector(".modal-content");
+
+  if (!modalContent) {
+    showMessage("Tu cita fue cancelada correctamente.", "success");
+
+    return;
+  }
+
+  modalContent.innerHTML = `
+
+      <div
+        class="modal-body text-center p-8"
+      >
+
+        <div
+          class="text-7xl text-green-500 mb-4"
+        >
+          <i
+            class="fas fa-check-circle"
+          ></i>
+        </div>
+
+        <h2
+          class="text-2xl font-bold text-[#005f73] mb-3"
+        >
+          Cita Cancelada
+        </h2>
+
+        <p
+          class="text-gray-600"
+        >
+          Tu cita fue cancelada correctamente.
+        </p>
+
+        <p
+          class="text-sm text-gray-500 mt-3"
+        >
+          El horario nuevamente está disponible
+          para agendamiento.
+        </p>
+
+        <button
+          id="cancel-success-close-btn"
+          type="button"
+          class="mt-6 w-full py-3 bg-[#005f73] text-white font-bold rounded-lg hover:bg-[#0a9396] transition"
+        >
+          Cerrar
+        </button>
+
+      </div>
+    `;
+
+  agendarModal.classList.add("active");
+
+  const closeBtn = document.getElementById("cancel-success-close-btn");
+
+  if (closeBtn) {
+    closeBtn.addEventListener("click", () => {
+      agendarModal.classList.remove("active");
+    });
+  }
+};
+
+//Lógica para cuando llegue el botón de cancelar la cita
+document.addEventListener(
+  "DOMContentLoaded",
+  () => {
+
+    handleAppointmentCancellationFromUrl();
+
+  }
+);
 
 const renderAgendaList = (containerEl) => {
   if (!containerEl) return;
@@ -1799,8 +1969,7 @@ const resetAppointmentView = () => {
 };
 
 const confirmAppointment = async () => {
-
-   // =========================================
+  // =========================================
   // EVITAR DOBLE CLIC / DOBLE ENVÍO
   // =========================================
 
@@ -1993,15 +2162,9 @@ const confirmAppointment = async () => {
     const modalContent = agendarModal.querySelector(".modal-content");
 
     if (!modalContent) {
+      console.error("No se encontró .modal-content");
 
-      console.error(
-        "No se encontró .modal-content"
-      );
-
-      showMessage(
-        "¡Cita registrada correctamente!",
-        "success"
-      );
+      showMessage("¡Cita registrada correctamente!", "success");
 
       return;
     }
@@ -2010,26 +2173,19 @@ const confirmAppointment = async () => {
      * Guardar los datos antes de reemplazar
      * el contenido del modal.
      */
-    
-    const confirmationDate =
-      selectedDate.toLocaleDateString(
-        "es-ES",
-        {
-          weekday: "long",
-          day: "numeric",
-          month: "long",
-          year: "numeric",
-        }
-      );
 
-    const confirmationTime =
-      selectedTime;
+    const confirmationDate = selectedDate.toLocaleDateString("es-ES", {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
 
-    const confirmationName =
-      clientName;
+    const confirmationTime = selectedTime;
 
-    const confirmationEmail =
-      clientEmail;
+    const confirmationName = clientName;
+
+    const confirmationEmail = clientEmail;
 
     modalContent.innerHTML = `
 
@@ -2135,41 +2291,23 @@ const confirmAppointment = async () => {
     // MOSTRAR AGENDA EN CONFIRMACIÓN
     // =========================================
 
-    const agendaSummary =
-      document.getElementById(
-        "agenda-summary-list"
-      );
+    const agendaSummary = document.getElementById("agenda-summary-list");
 
     if (agendaSummary) {
-
-      renderAgendaList(
-        agendaSummary
-      );
-
+      renderAgendaList(agendaSummary);
     }
 
     // =========================================
     // BOTÓN CERRAR
     // =========================================
 
-    const finalCloseBtn =
-      document.getElementById(
-        "final-close-btn"
-      );
+    const finalCloseBtn = document.getElementById("final-close-btn");
 
     if (finalCloseBtn) {
-
-      finalCloseBtn.addEventListener(
-        "click",
-        closeAgendarModal
-      );
-
+      finalCloseBtn.addEventListener("click", closeAgendarModal);
     }
 
-    console.log(
-      "Modal de confirmación mostrado correctamente."
-    );
-
+    console.log("Modal de confirmación mostrado correctamente.");
   } catch (error) {
     console.error("Error confirmando cita:", error);
 
