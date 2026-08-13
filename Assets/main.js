@@ -145,8 +145,13 @@ let clientName = "";
 let clientEmail = "";
 const APPOINTMENT_ENDPOINT =
   "https://script.google.com/macros/s/AKfycbzHqk8u4P1c6Fmr4ww4_7M2nVnjBitFErpCJucJbL3_pCTyWEzHdrHJ1aMZSAj7_5a93Q/exec";
+
+// ---Agendador---
 let remoteAppointments = [];
 let remoteAppointmentsLoaded = false;
+let appointmentsLoadingPromise = null;
+let appointmentsLoadedAt = 0;
+const APPOINTMENTS_CACHE_MS = 30000;
 
 // --- Opiniones ---
 let remoteOpiniones = [];
@@ -731,69 +736,112 @@ const isTimeSlotTaken = (date, time) => {
   });
 };
 
+//Función para traer las citas desde Google Sheets
 const fetchAppointmentsFromSheet = async (forceRefresh = false) => {
-  if (!APPOINTMENT_ENDPOINT) return [];
-  if (remoteAppointmentsLoaded && !forceRefresh) return remoteAppointments;
+  if (!APPOINTMENT_ENDPOINT) {
+    console.error("APPOINTMENT_ENDPOINT no está definido.");
 
-  const url = `${APPOINTMENT_ENDPOINT}?action=getAppointments&_=${Date.now()}`;
-
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      cache: "no-store",
-      mode: "cors",
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-
-    const result = await response.json();
-    if (result && Array.isArray(result.appointments)) {
-      /*console.log(
-              "fetchAppointmentsFromSheet: backend version",
-              result.version || "unknown",
-            );*/
-      remoteAppointments = result.appointments.map((item) => ({
-        id: String(item.id || ""),
-        date: item.date || "",
-        time: normalizeTime(item.time),
-        clientName: item.clientName || "",
-        clientEmail: item.clientEmail || "",
-        createdAt: formatDisplayDateTime(item.createdAt || item.date),
-        source: item.source || "sheet",
-      }));
-      remoteAppointmentsLoaded = true;
-    }
-  } catch (error) {
-    console.warn(
-      "fetchAppointmentsFromSheet: fetch CORS falló, usando JSONP",
-      error,
-    );
-    try {
-      const result = await loadJsonp(url);
-      if (result && Array.isArray(result.appointments)) {
-        remoteAppointments = result.appointments.map((item) => ({
-          id: String(item.id || ""),
-          date: item.date || "",
-          time: normalizeTime(item.time),
-          clientName: item.clientName || "",
-          clientEmail: item.clientEmail || "",
-          createdAt: formatDisplayDateTime(item.createdAt || item.date),
-          source: item.source || "sheet",
-        }));
-        remoteAppointmentsLoaded = true;
-      }
-    } catch (jsonpError) {
-      console.error("fetchAppointmentsFromSheet JSONP error:", jsonpError);
-    }
+    return remoteAppointments;
   }
 
-  return remoteAppointments;
+  const now = Date.now();
+
+  // Si los datos son recientes, no consultar Google otra vez.
+  if (
+    remoteAppointmentsLoaded &&
+    !forceRefresh &&
+    now - appointmentsLoadedAt < APPOINTMENTS_CACHE_MS
+  ) {
+    console.log("Agenda obtenida desde caché.");
+
+    return remoteAppointments;
+  }
+
+  // Si ya existe una consulta en curso,
+  // no lanzar una segunda solicitud.
+  if (appointmentsLoadingPromise) {
+    console.log("Ya existe una carga de agenda en proceso.");
+
+    return appointmentsLoadingPromise;
+  }
+
+  appointmentsLoadingPromise = (async () => {
+    const url =
+      `${APPOINTMENT_ENDPOINT}` +
+      `?action=getAppointments` +
+      `&_=${Date.now()}`;
+
+    console.log("Cargando agenda desde Google Sheets:", url);
+
+    try {
+      /*
+       * IMPORTANTE:
+       *
+       * Desde localhost no intentamos fetch primero.
+       * Vamos directamente por JSONP.
+       */
+      const result = await requestAppsScript(url, {
+        retries: 2,
+        timeout: 12000,
+        useFetchFirst: false,
+      });
+
+      if (
+        !result ||
+        result.success !== true ||
+        !Array.isArray(result.appointments)
+      ) {
+        throw new Error(result?.error || "Respuesta inválida del servidor.");
+      }
+
+      remoteAppointments = result.appointments.map((item) => ({
+        id: String(item.id || ""),
+
+        date: item.date || "",
+
+        time: normalizeTime(item.time),
+
+        clientName: item.clientName || "",
+
+        clientEmail: item.clientEmail || "",
+
+        createdAt: formatDisplayDateTime(item.createdAt || item.date),
+
+        source: item.source || "sheet",
+      }));
+
+      remoteAppointmentsLoaded = true;
+
+      appointmentsLoadedAt = Date.now();
+
+      console.log(
+        `Agenda cargada correctamente: ${remoteAppointments.length} cita(s).`,
+      );
+
+      return remoteAppointments;
+    } catch (error) {
+      console.error("Error cargando agenda desde Google Sheets:", error);
+
+      /*
+       * Si ya teníamos datos cargados,
+       * conservarlos.
+       */
+      return remoteAppointments;
+    }
+  })();
+
+  try {
+    return await appointmentsLoadingPromise;
+  } finally {
+    appointmentsLoadingPromise = null;
+  }
 };
 
+//Función para enviar la cita a Google Sheets
 const sendAppointmentToGoogleSheets = async (appointment) => {
-  if (!APPOINTMENT_ENDPOINT) return false;
+  if (!APPOINTMENT_ENDPOINT) {
+    return false;
+  }
 
   const params = new URLSearchParams({
     action: "saveAppointment",
@@ -803,16 +851,20 @@ const sendAppointmentToGoogleSheets = async (appointment) => {
     source: "tarjeta",
   });
 
-  const url = `${APPOINTMENT_ENDPOINT}?${params.toString()}`;
+  const url = `${APPOINTMENT_ENDPOINT}` + `?${params.toString()}`;
 
   try {
-    const result = await loadJsonp(url);
+    const result = await requestAppsScript(url, {
+      retries: 2,
+      timeout: 20000,
+      useFetchFirst: false,
+    });
 
     console.log("Guardar cita:", result);
 
-    return result.success === true;
+    return result && result.success === true;
   } catch (error) {
-    console.error(error);
+    console.error("Error guardando cita:", error);
 
     return false;
   }
@@ -1394,8 +1446,27 @@ const openAgendarModal = async () => {
   document
     .getElementById("refresh-agenda-btn")
     .addEventListener("click", async () => {
-      await fetchAppointmentsFromSheet();
-      renderAgendaList(document.getElementById("agenda-list"));
+      const refreshBtn = document.getElementById("refresh-agenda-btn");
+
+      const lista = document.getElementById("agenda-list");
+
+      if (!lista) return;
+
+      if (refreshBtn) {
+        refreshBtn.disabled = true;
+        refreshBtn.textContent = "Actualizando...";
+      }
+
+      try {
+        await fetchAppointmentsFromSheet(true);
+
+        renderAgendaList(lista);
+      } finally {
+        if (refreshBtn) {
+          refreshBtn.disabled = false;
+          refreshBtn.textContent = "Actualizar";
+        }
+      }
     });
 
   agendarModal.classList.add("active");
@@ -1406,7 +1477,7 @@ const openAgendarModal = async () => {
     agendaList.innerHTML =
       '<p class="text-sm text-gray-500">Cargando citas desde Google Sheets...</p>';
   }
-  await fetchAppointmentsFromSheet(true);
+  await fetchAppointmentsFromSheet(false);
   renderAgendaList(document.getElementById("agenda-list"));
 };
 
