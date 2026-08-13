@@ -10,11 +10,10 @@ Pasos para crear un Web App en Google Apps Script:
 8. Ahora puedes enviar solicitudes  POST a esa URL para guardar citas en la hoja de cálculo.
 */
 
-//https://script.google.com/macros/s/AKfycbzKmJLe6y-G-Jqolqyw0KBJ-zhaVcSr0pBbtpzzq0NMJrh9zK-Nh64ehj_QeDin9zV0kg/exec?action=getAppointments&callback=testCallback
-
 const SHEET_ID = "1DfzxZCJrruEcPZ52V00vSx8uU1YQ09TC38IrihbJK68";
 const SHEET_NAME = "Citas";
 const OPINIONES_SHEET_NAME = 'Opiniones';
+const PUBLIC_CARD_URL = "https://sanditor.github.io/tarjeta_presentacion/";
 
 function getSheet() {
   const ss = SpreadsheetApp.openById(SHEET_ID);
@@ -33,6 +32,7 @@ function getSheet() {
     "description",
     "createdAt",
     "source",
+    "deleteTokenHash",
   ];
 
   if (sheet.getLastRow() === 0) {
@@ -81,7 +81,7 @@ function doGet(e) {
       return saveAppointment(params, callback);
 
     case "deleteAppointment":
-      return deleteAppointment(params.id, callback);
+      return deleteAppointment(params.id,params.deleteToken, callback);
     
     case "getOpiniones":
       return getOpiniones(callback);
@@ -103,7 +103,8 @@ function doGet(e) {
 function getAppointments(callback) {
   const sheet = getSheet();
 
-  const values = sheet.getDataRange().getValues();
+  const values =
+    sheet.getDataRange().getValues();
 
   if (values.length <= 1) {
     return buildResponse(
@@ -111,29 +112,86 @@ function getAppointments(callback) {
         success: true,
         appointments: [],
       },
-      callback,
+      callback
     );
   }
 
   const headers = values[0];
 
-  const appointments = values.slice(1).map((row) => {
-    let obj = {};
+  const idIndex =
+    headers.indexOf("id");
 
-    headers.forEach((header, index) => {
-      obj[header] = row[index];
-    });
+  const dateIndex =
+    headers.indexOf("date");
 
-    return obj;
-  });
+  const timeIndex =
+    headers.indexOf("time");
+
+  const createdAtIndex =
+    headers.indexOf("createdAt");
+
+  const sourceIndex =
+    headers.indexOf("source");
+
+  const appointments =
+    values
+      .slice(1)
+      .map((row) => ({
+        id:
+          idIndex >= 0
+            ? row[idIndex]
+            : "",
+
+        date:
+          dateIndex >= 0
+            ? row[dateIndex]
+            : "",
+
+        time:
+          timeIndex >= 0
+            ? row[timeIndex]
+            : "",
+
+        createdAt:
+          createdAtIndex >= 0
+            ? row[createdAtIndex]
+            : "",
+
+        source:
+          sourceIndex >= 0
+            ? row[sourceIndex]
+            : "",
+      }));
 
   return buildResponse(
     {
       success: true,
-      appointments: appointments,
+      appointments:
+        appointments,
     },
-    callback,
+    callback
   );
+}
+
+function hashDeleteToken(token) {
+  const digest = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    String(token),
+    Utilities.Charset.UTF_8
+  );
+
+  return digest
+    .map(function (byte) {
+      const value =
+        byte < 0
+          ? byte + 256
+          : byte;
+
+      return value
+        .toString(16)
+        .padStart(2, "0");
+    })
+    .join("");
 }
 
 function saveAppointment(params, callback) {
@@ -141,20 +199,64 @@ function saveAppointment(params, callback) {
 
   const data = sheet.getDataRange().getValues();
 
+  // ============================
+  // VALIDAR TOKEN DE CANCELACIÓN
+  // ============================
+
+  const deleteToken =
+    String(params.deleteToken || "").trim();
+
+  if (!deleteToken) {
+    return buildResponse(
+      {
+        success: false,
+        error:
+          "No se recibió el token de seguridad de la cita.",
+      },
+      callback
+    );
+  }
+
+  if (!/^[a-f0-9]{64}$/i.test(deleteToken)) {
+    return buildResponse(
+      {
+        success: false,
+        error:
+          "El token de seguridad no es válido.",
+      },
+      callback
+    );
+  }
+
+  // ============================
+  // VERIFICAR HORARIO
+  // ============================
+
   for (let i = 1; i < data.length; i++) {
     if (
-      String(data[i][1]) === String(params.date) &&
-      String(data[i][2]) === String(params.time)
+      String(data[i][1]) ===
+        String(params.date) &&
+      String(data[i][2]) ===
+        String(params.time)
     ) {
       return buildResponse(
         {
           success: false,
-          error: "Ese horario ya fue reservado.",
+          error:
+            "Ese horario ya fue reservado.",
         },
-        callback,
+        callback
       );
     }
   }
+
+  // Nunca guardamos el token original.
+  const deleteTokenHash =
+    hashDeleteToken(deleteToken);
+
+  // ============================
+  // GUARDAR CITA
+  // ============================
 
   sheet.appendRow([
     params.id,
@@ -165,15 +267,17 @@ function saveAppointment(params, callback) {
     params.description,
     params.createdAt,
     params.source,
+    deleteTokenHash,
   ]);
 
+  // Conservamos tus correos actuales
   sendAppointmentEmails(params);
 
   return buildResponse(
     {
       success: true,
     },
-    callback,
+    callback
   );
 }
 
@@ -185,6 +289,21 @@ function sendAppointmentEmails(params) {
     Session.getScriptTimeZone(),
     "dd/MM/yyyy",
   );
+
+  // ============================================
+  // ENLACE PRIVADO DE CANCELACIÓN
+  // ============================================
+
+  const cancelUrl =
+    PUBLIC_CARD_URL +
+    "?cancelAppointment=" +
+    encodeURIComponent(
+      String(params.id || "")
+    ) +
+    "&token=" +
+    encodeURIComponent(
+      String(params.deleteToken || "")
+    );
 
   // ============================
   // CORREO PARA EL CLIENTE
@@ -294,6 +413,36 @@ function sendAppointmentEmails(params) {
           📧 Contactarme
 
           </a>
+
+          <br><br>
+
+          <a
+            href="${cancelUrl}"
+            style="
+              background:#b91c1c;
+              color:white;
+              padding:12px 24px;
+              border-radius:8px;
+              text-decoration:none;
+              font-weight:bold;
+              display:inline-block;
+            "
+          >
+            ❌ Cancelar mi cita
+          </a>
+
+          <p
+            style="
+              margin-top:14px;
+              color:#6b7280;
+              font-size:12px;
+              line-height:1.5;
+            "
+          >
+            Este enlace es privado y permite
+            cancelar únicamente esta cita.
+            No lo compartas con otras personas.
+          </p>
 
         </div>
 
@@ -426,20 +575,117 @@ function sendAppointmentEmails(params) {
   });
 }
 
-function deleteAppointment(id, callback) {
+function deleteAppointment(
+  id,
+  deleteToken,
+  callback
+) {
   const sheet = getSheet();
 
-  const data = sheet.getDataRange().getValues();
+  const data =
+    sheet.getDataRange().getValues();
 
-  for (let i = 1; i < data.length; i++) {
-    if (String(data[i][0]) === String(id)) {
+  if (!id) {
+    return buildResponse(
+      {
+        success: false,
+        error:
+          "No se recibió el identificador de la cita.",
+      },
+      callback
+    );
+  }
+
+  if (!deleteToken) {
+    return buildResponse(
+      {
+        success: false,
+        error:
+          "No tienes autorización para eliminar esta cita.",
+      },
+      callback
+    );
+  }
+
+  // Encabezados de Google Sheets
+  const headers = data[0];
+
+  const idIndex =
+    headers.indexOf("id");
+
+  const tokenIndex =
+    headers.indexOf("deleteTokenHash");
+
+  if (
+    idIndex === -1 ||
+    tokenIndex === -1
+  ) {
+    return buildResponse(
+      {
+        success: false,
+        error:
+          "La hoja de citas no está configurada correctamente.",
+      },
+      callback
+    );
+  }
+
+  // Hash del token enviado por el navegador
+  const receivedHash =
+    hashDeleteToken(deleteToken);
+
+  for (
+    let i = 1;
+    i < data.length;
+    i++
+  ) {
+    const appointmentId =
+      String(data[i][idIndex]);
+
+    if (
+      appointmentId === String(id)
+    ) {
+      const storedHash =
+        String(
+          data[i][tokenIndex] || ""
+        ).trim();
+
+      // Citas antiguas sin token
+      if (!storedHash) {
+        return buildResponse(
+          {
+            success: false,
+            error:
+              "Esta cita no dispone de autorización de cancelación.",
+          },
+          callback
+        );
+      }
+
+      // El token no pertenece a esa cita
+      if (
+        storedHash !== receivedHash
+      ) {
+        return buildResponse(
+          {
+            success: false,
+            error:
+              "No tienes autorización para eliminar esta cita.",
+          },
+          callback
+        );
+      }
+
+      // Token correcto
       sheet.deleteRow(i + 1);
+
+      SpreadsheetApp.flush();
 
       return buildResponse(
         {
           success: true,
         },
-        callback,
+        callback
       );
     }
   }
@@ -447,9 +693,10 @@ function deleteAppointment(id, callback) {
   return buildResponse(
     {
       success: false,
-      error: "No se encontró la cita.",
+      error:
+        "No se encontró la cita.",
     },
-    callback,
+    callback
   );
 }
 

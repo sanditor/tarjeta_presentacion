@@ -144,7 +144,7 @@ let selectedTime = null;
 let clientName = "";
 let clientEmail = "";
 const APPOINTMENT_ENDPOINT =
-  "https://script.google.com/macros/s/AKfycbzHqk8u4P1c6Fmr4ww4_7M2nVnjBitFErpCJucJbL3_pCTyWEzHdrHJ1aMZSAj7_5a93Q/exec";
+  "https://script.google.com/macros/s/AKfycbzzBHZYXHDBmRRo1z5EPnVyryv4JiTsu9avCLB5wn5efnJ_AUYywWo_-3eOxATnqFmA6Q/exec";
 
 // ---Agendador---
 let remoteAppointments = [];
@@ -152,6 +152,7 @@ let remoteAppointmentsLoaded = false;
 let appointmentsLoadingPromise = null;
 let appointmentsLoadedAt = 0;
 const APPOINTMENTS_CACHE_MS = 30000;
+const APPOINTMENT_TOKEN_PREFIX = "sandor_appointment_delete_";
 
 // --- Opiniones ---
 let remoteOpiniones = [];
@@ -219,6 +220,56 @@ const formatDisplayDateTime = (rawDate) => {
     hour: "2-digit",
     minute: "2-digit",
   });
+};
+
+// Generar token criptográficamente aleatorio
+const generateAppointmentDeleteToken = () => {
+  const bytes = new Uint8Array(32);
+
+  crypto.getRandomValues(bytes);
+
+  return Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+};
+
+// Guardar el token únicamente en este navegador
+const saveAppointmentDeleteToken = (appointmentId, token) => {
+  try {
+    localStorage.setItem(
+      APPOINTMENT_TOKEN_PREFIX + String(appointmentId),
+      token,
+    );
+
+    return true;
+  } catch (error) {
+    console.error("No fue posible guardar el token de la cita:", error);
+
+    return false;
+  }
+};
+
+// Recuperar token
+const getAppointmentDeleteToken = (appointmentId) => {
+  try {
+    return (
+      localStorage.getItem(APPOINTMENT_TOKEN_PREFIX + String(appointmentId)) ||
+      ""
+    );
+  } catch (error) {
+    console.error("Error leyendo token:", error);
+
+    return "";
+  }
+};
+
+// Eliminar token cuando se cancela la cita
+const removeAppointmentDeleteToken = (appointmentId) => {
+  try {
+    localStorage.removeItem(APPOINTMENT_TOKEN_PREFIX + String(appointmentId));
+  } catch (error) {
+    console.error("Error eliminando token local:", error);
+  }
 };
 
 //Función para la respuesta del json del backend
@@ -1243,44 +1294,65 @@ const showMessage = (message, type = "success") => {
 
 const deleteAppointment = async (appointmentId) => {
   if (!APPOINTMENT_ENDPOINT) {
-    console.error("deleteAppointment: APPOINTMENT_ENDPOINT no está definido");
-    showMessage("No hay endpoint configurado para eliminar la cita.", "error");
-    return false;
-  }
-  if (!appointmentId) {
-    console.error("deleteAppointment: appointmentId inválido", appointmentId);
-    showMessage(
-      "No se recibió un identificador válido para eliminar.",
-      "error",
-    );
+    showMessage("No hay endpoint configurado.", "error");
+
     return false;
   }
 
-  const requestUrl = `${APPOINTMENT_ENDPOINT}?action=deleteAppointment&id=${encodeURIComponent(appointmentId)}&_=${Date.now()}`;
-  console.log("deleteAppointment: enviando solicitud JSONP", requestUrl);
-  showMessage("Enviando solicitud de eliminación al backend...", "warning");
+  if (!appointmentId) {
+    showMessage("Identificador de cita inválido.", "error");
+
+    return false;
+  }
+
+  // Buscar el token secreto
+  const deleteToken = getAppointmentDeleteToken(appointmentId);
+
+  // Si este navegador no creó la cita,
+  // no puede eliminarla.
+  if (!deleteToken) {
+    showMessage("No tienes autorización para eliminar esta cita.", "error");
+
+    return false;
+  }
+
+  const params = new URLSearchParams({
+    action: "deleteAppointment",
+
+    id: String(appointmentId),
+
+    deleteToken: deleteToken,
+
+    _: String(Date.now()),
+  });
+
+  const requestUrl = `${APPOINTMENT_ENDPOINT}?${params.toString()}`;
+
+  showMessage("Eliminando tu cita...", "warning");
 
   try {
-    const result = await loadJsonp(requestUrl);
-    console.log("deleteAppointment: result object", result);
-    const success = result && result.success === true;
+    const result = await requestAppsScript(requestUrl, {
+      retries: 2,
+      timeout: 15000,
+      useFetchFirst: false,
+    });
 
-    if (success) {
-      showMessage("La cita fue eliminada correctamente.", "success");
+    if (result && result.success === true) {
+      // Ya no necesitamos el token
+      removeAppointmentDeleteToken(appointmentId);
+
+      showMessage("Tu cita fue eliminada correctamente.", "success");
 
       return true;
     }
 
-    showMessage(
-      result?.error || "El backend no pudo eliminar la cita.",
-      "error",
-    );
+    showMessage(result?.error || "No fue posible eliminar la cita.", "error");
 
     return false;
   } catch (error) {
-    console.error(error);
+    console.error("Error eliminando cita:", error);
 
-    showMessage("Error de conexión con Google Sheets.", "error");
+    showMessage("Error de conexión con el servidor.", "error");
 
     return false;
   }
@@ -1305,16 +1377,65 @@ const renderAgendaList = (containerEl) => {
     .slice(0, 6)
     .map((appointment) => {
       const dateLabel = formatDisplayDate(appointment.date);
+
+      // Solo el navegador que creó la cita
+      // tendrá este token.
+      const isOwnAppointment = Boolean(
+        getAppointmentDeleteToken(appointment.id),
+      );
+
+      const ownerActions = isOwnAppointment
+        ? `
+        <div class="mt-3 flex items-center justify-between gap-3">
+
+          <span
+            class="text-xs font-semibold text-green-600"
+          >
+            <i class="fas fa-check-circle mr-1"></i>
+            Tu cita
+          </span>
+
+          <button
+            class="delete-appointment-btn text-xs text-red-600 hover:underline font-semibold"
+            data-id="${appointment.id}"
+          >
+            <i class="fas fa-trash-alt mr-1"></i>
+            Eliminar mi cita
+          </button>
+
+        </div>
+      `
+        : "";
+
       return `
-                    <div class="rounded-lg border border-gray-200 bg-gray-50 p-3 text-left">
-                        <div class="font-semibold text-[#005f73]">${dateLabel}</div>
-                        <div class="text-sm text-gray-600 mt-1">Hora: ${normalizeTime(appointment.time)}</div>
-                        <div class="text-xs text-gray-400 mt-1">Guardada: ${appointment.createdAt}</div>
-                        <div class="mt-3 flex gap-3">
-                            <button class="delete-appointment-btn text-xs text-red-600 hover:underline" data-id="${appointment.id}">Eliminar</button>
-                        </div>
-                    </div>
-                `;
+    <div
+      class="rounded-lg border border-gray-200 bg-gray-50 p-3 text-left"
+    >
+
+      <div
+        class="font-semibold text-[#005f73]"
+      >
+        ${dateLabel}
+      </div>
+
+      <div
+        class="text-sm text-gray-600 mt-1"
+      >
+        Hora:
+        ${normalizeTime(appointment.time)}
+      </div>
+
+      <div
+        class="text-xs text-gray-400 mt-1"
+      >
+        Guardada:
+        ${appointment.createdAt}
+      </div>
+
+      ${ownerActions}
+
+    </div>
+  `;
     })
     .join("");
 
@@ -1726,6 +1847,8 @@ const confirmAppointment = async () => {
       return;
     }
 
+    const deleteToken = generateAppointmentDeleteToken();
+
     const appointment = {
       id: Date.now(),
       date: selectedDate.toISOString(),
@@ -1734,6 +1857,7 @@ const confirmAppointment = async () => {
       clientEmail,
       description: appointmentDescription,
       createdAt: new Date().toLocaleString("es-ES"),
+      deleteToken: deleteToken,
     };
 
     const saved = await sendAppointmentToGoogleSheets(appointment);
@@ -1750,6 +1874,10 @@ const confirmAppointment = async () => {
 
       return;
     }
+
+    // La cita ya fue confirmada por el servidor.
+    // Guardamos su autorización de cancelación.
+    saveAppointmentDeleteToken(appointment.id, appointment.deleteToken);
 
     // Recargar la agenda desde Google Sheets
     await fetchAppointmentsFromSheet(true);
