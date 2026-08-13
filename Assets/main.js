@@ -143,8 +143,9 @@ let selectedDate = null;
 let selectedTime = null;
 let clientName = "";
 let clientEmail = "";
+let appointmentSending = false;
 const APPOINTMENT_ENDPOINT =
-  "https://script.google.com/macros/s/AKfycbyaizK3MM-P-4Yq8NklxY3Klkvpk1el0a56QeeDOLe9A0jtwkcivalQLli5b2as-f9-2g/exec";
+  "https://script.google.com/macros/s/AKfycbxwVoekSwczuJINtP4JR7wtT5nRezRi8Sph3RIn52VXKscbslfG6TUDzQLTP1BNuC6d8A/exec";
 
 // ---Agendador---
 let remoteAppointments = [];
@@ -889,9 +890,13 @@ const fetchAppointmentsFromSheet = async (forceRefresh = false) => {
 };
 
 //Función para enviar la cita a Google Sheets
+//Función para enviar la cita a Google Sheets
 const sendAppointmentToGoogleSheets = async (appointment) => {
   if (!APPOINTMENT_ENDPOINT) {
-    return false;
+    return {
+      success: false,
+      error: "Endpoint de citas no configurado.",
+    };
   }
 
   const params = new URLSearchParams({
@@ -900,24 +905,48 @@ const sendAppointmentToGoogleSheets = async (appointment) => {
     ...appointment,
 
     source: "tarjeta",
+
+    _: String(Date.now()),
   });
 
-  const url = `${APPOINTMENT_ENDPOINT}` + `?${params.toString()}`;
+  const url = `${APPOINTMENT_ENDPOINT}?${params.toString()}`;
 
   try {
     const result = await requestAppsScript(url, {
       retries: 2,
-      timeout: 20000,
+      timeout: 30000,
       useFetchFirst: false,
     });
 
-    console.log("Guardar cita:", result);
+    console.log("Respuesta guardar cita:", result);
 
-    return result && result.success === true;
+    if (!result) {
+      return {
+        success: false,
+        error: "El servidor no devolvió una respuesta válida.",
+      };
+    }
+
+    /*
+     * IMPORTANTE:
+     *
+     * Devolvemos el OBJETO completo.
+     *
+     * Ejemplo:
+     * {
+     *   success: true,
+     *   duplicate: false,
+     *   id: "..."
+     * }
+     */
+    return result;
   } catch (error) {
     console.error("Error guardando cita:", error);
 
-    return false;
+    return {
+      success: false,
+      error: "No fue posible comunicarse con el servidor.",
+    };
   }
 };
 
@@ -1770,14 +1799,39 @@ const resetAppointmentView = () => {
 };
 
 const confirmAppointment = async () => {
-  try {
-    const confirmBtn = document.getElementById("confirm-appointment-btn");
 
-    if (confirmBtn.disabled) return;
+   // =========================================
+  // EVITAR DOBLE CLIC / DOBLE ENVÍO
+  // =========================================
+
+  if (appointmentSending) {
+    console.warn("Ya existe una cita en proceso de envío.");
+
+    return;
+  }
+
+  appointmentSending = true;
+
+  let confirmBtn = null;
+
+  try {
+    confirmBtn = document.getElementById("confirm-appointment-btn");
+
+    if (!confirmBtn) {
+      return;
+    }
+
+    if (confirmBtn.disabled) {
+      return;
+    }
 
     confirmBtn.disabled = true;
     confirmBtn.innerHTML =
       '<i class="fas fa-spinner fa-spin"></i> Guardando...';
+
+    // =========================================
+    // VALIDAR FECHA Y HORA
+    // =========================================
 
     if (!selectedDate || !selectedTime) {
       confirmBtn.disabled = false;
@@ -1796,6 +1850,10 @@ const confirmAppointment = async () => {
       return;
     }
 
+    // =========================================
+    // OBTENER CAMPOS
+    // =========================================
+
     const nameInput = document.getElementById("client-name-input");
     const emailInput = document.getElementById("client-email-input");
     const descriptionInput = document.getElementById("appointment-description");
@@ -1805,6 +1863,7 @@ const confirmAppointment = async () => {
     clientName = nameInput ? nameInput.value.trim() : "";
     clientEmail = emailInput ? emailInput.value.trim() : "";
 
+    // VALIDAR NOMBRE
     if (!clientName) {
       markFieldError(nameInput, "Por favor ingresa tu nombre para agendar.");
 
@@ -1814,6 +1873,7 @@ const confirmAppointment = async () => {
       return;
     }
 
+    // VALIDAR EMAIL
     if (!clientEmail) {
       markFieldError(emailInput, "Por favor ingresa tu email para agendar.");
 
@@ -1835,6 +1895,7 @@ const confirmAppointment = async () => {
       return;
     }
 
+    // VALIDAR DESCRIPCIÓN
     if (!appointmentDescription) {
       markFieldError(
         descriptionInput,
@@ -1847,24 +1908,47 @@ const confirmAppointment = async () => {
       return;
     }
 
+    // =========================================
+    // CREAR CITA
+    // =========================================
+
     const deleteToken = generateAppointmentDeleteToken();
 
+    /*
+     * ID único.
+     *
+     * El backend lo usa para impedir
+     * registros duplicados durante
+     * reintentos JSONP.
+     */
+
     const appointment = {
-      id: Date.now(),
+      id: Date.now() + "-" + Math.random().toString(36).substring(2, 10),
+
       date: selectedDate.toISOString(),
+
       time: selectedTime,
-      clientName,
-      clientEmail,
+
+      clientName: clientName,
+
+      clientEmail: clientEmail,
+
       description: appointmentDescription,
-      createdAt: new Date().toLocaleString("es-ES"),
+
+      createdAt: new Date().toISOString(),
+
       deleteToken: deleteToken,
     };
 
-    const saved = await sendAppointmentToGoogleSheets(appointment);
+    // ========================================
+    // GUARDAR EN GOOGLE SHEETS
+    // ========================================
 
-    if (!saved) {
+    const saveResult = await sendAppointmentToGoogleSheets(appointment);
+
+    if (!saveResult || saveResult.success !== true) {
       showMessage(
-        "No fue posible guardar la cita en Google Sheets.",
+        saveResult?.error || "No fue posible guardar la cita.",
         "warning",
       );
 
@@ -1875,58 +1959,228 @@ const confirmAppointment = async () => {
       return;
     }
 
-    // La cita ya fue confirmada por el servidor.
-    // Guardamos su autorización de cancelación.
+    // ========================================
+    // GUARDADO CONFIRMADO
+    // ========================================
+
+    /*
+     * Guardamos el token para que este
+     * navegador pueda cancelar la cita.
+     */
+
     saveAppointmentDeleteToken(appointment.id, appointment.deleteToken);
 
-    // Recargar la agenda desde Google Sheets
-    await fetchAppointmentsFromSheet(true);
+    /*
+     * Actualizar agenda.
+     *
+     * Esta actualización NO determina
+     * si la cita fue guardada.
+     * Apps Script ya confirmó el guardado.
+     */
+    try {
+      await fetchAppointmentsFromSheet(true);
+    } catch (refreshError) {
+      console.warn(
+        "La cita se guardó pero la agenda no pudo actualizarse:",
+        refreshError,
+      );
+    }
 
-    const citaExiste = remoteAppointments.some(
-      (item) => String(item.id) === String(appointment.id),
-    );
+    // ========================================
+    // MODAL DE CONFIRMACIÓN EXITOSA
+    // ========================================
 
-    if (!citaExiste) {
-      showMessage(
-        "La cita no apareció en Google Sheets. Intenta nuevamente.",
-        "info",
+    const modalContent = agendarModal.querySelector(".modal-content");
+
+    if (!modalContent) {
+
+      console.error(
+        "No se encontró .modal-content"
       );
 
-      confirmBtn.disabled = false;
-      confirmBtn.innerHTML = "Confirmar Cita";
+      showMessage(
+        "¡Cita registrada correctamente!",
+        "success"
+      );
 
       return;
     }
 
-    const modalContent = agendarModal.querySelector(".modal-content");
+    /*
+     * Guardar los datos antes de reemplazar
+     * el contenido del modal.
+     */
+    
+    const confirmationDate =
+      selectedDate.toLocaleDateString(
+        "es-ES",
+        {
+          weekday: "long",
+          day: "numeric",
+          month: "long",
+          year: "numeric",
+        }
+      );
+
+    const confirmationTime =
+      selectedTime;
+
+    const confirmationName =
+      clientName;
+
+    const confirmationEmail =
+      clientEmail;
+
     modalContent.innerHTML = `
-                <div class="modal-body text-center p-8">
-                    <div class="text-7xl text-green-500 mb-4"><i class="fas fa-check-circle"></i></div>
-                    <h2 class="text-2xl font-bold text-[#005f73] mb-2">¡Cita Confirmada!</h2>
-                    <p class="text-gray-600">Tu cita está agendada para el</p>
-                    <p class="font-semibold text-gray-800 text-lg my-2 bg-gray-100 p-2 rounded-lg">${selectedDate.toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" })} a las ${selectedTime}</p>
-                    <div class="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4 text-left">
-                        <p class="text-sm font-semibold text-[#005f73] mb-2">Agenda actual</p>
-                        <div id="agenda-summary-list" class="space-y-2"></div>
-                    </div>
-                    <div class="mt-4 text-left text-sm text-gray-600">
-                        <p><strong>Nombre:</strong> ${clientName}</p>
-                        ${clientEmail ? `<p><strong>Correo:</strong> ${clientEmail}</p>` : ""}
-                    </div>
-                    <p class="text-sm text-gray-500 mt-4">La cita fue registrada correctamente en la agenda de Google Sheets.</p>
-                    <button id="final-close-btn" class="mt-6 w-full py-3 bg-[#005f73] text-white font-bold rounded-lg hover:bg-[#0a9396] transition">Cerrar</button>
-                </div>`;
-    renderAgendaList(document.getElementById("agenda-summary-list"));
-    document
-      .getElementById("final-close-btn")
-      .addEventListener("click", closeAgendarModal);
+
+      <div
+        class="modal-body text-center p-8"
+      >
+
+        <div
+          class="text-7xl text-green-500 mb-4"
+        >
+          <i
+            class="fas fa-check-circle"
+          ></i>
+        </div>
+
+        <h2
+          class="text-2xl font-bold text-[#005f73] mb-2"
+        >
+          ¡Cita Confirmada!
+        </h2>
+
+        <p
+          class="text-gray-600"
+        >
+          Tu cita está agendada para el
+        </p>
+
+        <div
+          class="font-semibold text-gray-800 text-lg my-4 bg-gray-100 p-4 rounded-xl"
+        >
+
+          <div>
+            📅 ${confirmationDate}
+          </div>
+
+          <div
+            class="mt-2"
+          >
+            🕘 ${confirmationTime}
+          </div>
+
+        </div>
+
+        <div
+          class="mt-5 text-left text-sm text-gray-600 bg-white border border-gray-200 rounded-xl p-4"
+        >
+
+          <p>
+            <strong>Nombre:</strong>
+            ${escapeHtml(confirmationName)}
+          </p>
+
+          <p
+            class="mt-2"
+          >
+            <strong>Correo:</strong>
+            ${escapeHtml(confirmationEmail)}
+          </p>
+
+        </div>
+
+        <p
+          class="text-sm text-green-600 font-semibold mt-5"
+        >
+          ✓ La cita fue registrada correctamente en Google Sheets.
+        </p>
+
+        <p
+          class="text-xs text-gray-500 mt-2"
+        >
+          También recibirás la confirmación en tu correo electrónico.
+        </p>
+
+        <div
+          class="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4 text-left"
+        >
+
+          <p
+            class="text-sm font-semibold text-[#005f73] mb-2"
+          >
+            Agenda actual
+          </p>
+
+          <div
+            id="agenda-summary-list"
+            class="space-y-2"
+          ></div>
+
+        </div>
+
+        <button
+          id="final-close-btn"
+          type="button"
+          class="mt-6 w-full py-3 bg-[#005f73] text-white font-bold rounded-lg hover:bg-[#0a9396] transition"
+        >
+          Cerrar
+        </button>
+
+      </div>
+    `;
+
+    // =========================================
+    // MOSTRAR AGENDA EN CONFIRMACIÓN
+    // =========================================
+
+    const agendaSummary =
+      document.getElementById(
+        "agenda-summary-list"
+      );
+
+    if (agendaSummary) {
+
+      renderAgendaList(
+        agendaSummary
+      );
+
+    }
+
+    // =========================================
+    // BOTÓN CERRAR
+    // =========================================
+
+    const finalCloseBtn =
+      document.getElementById(
+        "final-close-btn"
+      );
+
+    if (finalCloseBtn) {
+
+      finalCloseBtn.addEventListener(
+        "click",
+        closeAgendarModal
+      );
+
+    }
+
+    console.log(
+      "Modal de confirmación mostrado correctamente."
+    );
+
   } catch (error) {
-    console.error(error);
+    console.error("Error confirmando cita:", error);
 
     showMessage("Ocurrió un error inesperado.", "error");
 
-    confirmBtn.disabled = false;
-    confirmBtn.innerHTML = "Confirmar Cita";
+    if (confirmBtn) {
+      confirmBtn.disabled = false;
+      confirmBtn.innerHTML = "Confirmar Cita";
+    }
+  } finally {
+    appointmentSending = false;
   }
 };
 
