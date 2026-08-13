@@ -155,6 +155,10 @@ let appointmentsLoadedAt = 0;
 const APPOINTMENTS_CACHE_MS = 30000;
 const APPOINTMENT_TOKEN_PREFIX = "sandor_appointment_delete_";
 
+// Paginación de la agenda
+let agendaPage = 1;
+const APPOINTMENTS_PER_PAGE = 2;
+
 // --- Opiniones ---
 let remoteOpiniones = [];
 let opinionesPage = 1;
@@ -861,6 +865,17 @@ const fetchAppointmentsFromSheet = async (forceRefresh = false) => {
 
         source: item.source || "sheet",
       }));
+
+      /*
+       * Mostrar primero las citas
+       * registradas más recientemente.
+       */
+      remoteAppointments.reverse();
+
+      /*
+       * Primera página = citas más nuevas.
+       */
+      agendaPage = 1;
 
       remoteAppointmentsLoaded = true;
 
@@ -1732,8 +1747,29 @@ const renderAgendaList = (containerEl) => {
     return;
   }
 
-  containerEl.innerHTML = remoteAppointments
-    .slice(0, 6)
+  // Calcular cantidad total de páginas
+  const totalPages = Math.ceil(
+    remoteAppointments.length / APPOINTMENTS_PER_PAGE,
+  );
+
+  // Evitar que agendaPage quede fuera de rango
+  if (agendaPage > totalPages) {
+    agendaPage = totalPages;
+  }
+
+  if (agendaPage < 1) {
+    agendaPage = 1;
+  }
+
+  // Calcular desde qué cita mostrar
+  const start = (agendaPage - 1) * APPOINTMENTS_PER_PAGE;
+
+  const end = start + APPOINTMENTS_PER_PAGE;
+
+  // Solo las citas de la página actual
+  const appointmentsPagina = remoteAppointments.slice(start, end);
+
+  containerEl.innerHTML = appointmentsPagina
     .map((appointment) => {
       const dateLabel = formatDisplayDate(appointment.date);
 
@@ -1797,6 +1833,87 @@ const renderAgendaList = (containerEl) => {
   `;
     })
     .join("");
+
+  // ========================================
+  // PAGINACIÓN DE LA AGENDA
+  // ========================================
+
+  if (totalPages > 1) {
+    containerEl.insertAdjacentHTML(
+      "beforeend",
+      `
+      <div
+        class="agenda-pagination flex items-center justify-between gap-3 pt-3 mt-3 border-t border-gray-200"
+      >
+
+        <button
+          type="button"
+          class="agenda-prev-btn px-3 py-2 rounded-lg border border-gray-300 text-sm font-semibold
+          ${
+            agendaPage === 1
+              ? "text-gray-300 cursor-not-allowed"
+              : "text-[#005f73] hover:bg-gray-100"
+          }"
+          ${agendaPage === 1 ? "disabled" : ""}
+        >
+          ← Anterior
+        </button>
+
+        <span
+          class="text-xs sm:text-sm font-semibold text-gray-600 whitespace-nowrap"
+        >
+          Página ${agendaPage} de ${totalPages}
+        </span>
+
+        <button
+          type="button"
+          class="agenda-next-btn px-3 py-2 rounded-lg border border-gray-300 text-sm font-semibold
+          ${
+            agendaPage === totalPages
+              ? "text-gray-300 cursor-not-allowed"
+              : "text-[#005f73] hover:bg-gray-100"
+          }"
+          ${agendaPage === totalPages ? "disabled" : ""}
+        >
+          Siguiente →
+        </button>
+
+      </div>
+    `,
+    );
+  }
+
+  // ========================================
+  // EVENTOS DE PAGINACIÓN
+  // ========================================
+
+  const agendaPrevBtn = containerEl.querySelector(".agenda-prev-btn");
+
+  const agendaNextBtn = containerEl.querySelector(".agenda-next-btn");
+
+  if (agendaPrevBtn) {
+    agendaPrevBtn.addEventListener("click", () => {
+      if (agendaPage <= 1) {
+        return;
+      }
+
+      agendaPage--;
+
+      renderAgendaList(containerEl);
+    });
+  }
+
+  if (agendaNextBtn) {
+    agendaNextBtn.addEventListener("click", () => {
+      if (agendaPage >= totalPages) {
+        return;
+      }
+
+      agendaPage++;
+
+      renderAgendaList(containerEl);
+    });
+  }
 
   containerEl.querySelectorAll(".delete-appointment-btn").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -1995,8 +2112,16 @@ const openAgendarModal = async () => {
 
 const closeAgendarModal = () => {
   agendarModal.classList.remove("active");
+
   selectedDate = null;
   selectedTime = null;
+
+  /*
+   * La próxima vez que se abra
+   * la agenda, comenzar por las
+   * citas más recientes.
+   */
+  agendaPage = 1;
 };
 
 const renderCalendar = () => {
