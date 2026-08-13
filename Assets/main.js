@@ -145,7 +145,7 @@ let clientName = "";
 let clientEmail = "";
 let appointmentSending = false;
 const APPOINTMENT_ENDPOINT =
-  "https://script.google.com/macros/s/AKfycbyCnBmvkcEL3-Al96_NJD-8hd8AXZ_GAfviZvjfc2cJi10bMC2UielK20wt_FjLYWECtg/exec";
+  "https://script.google.com/macros/s/AKfycbzRovk-eqgb1kHXPmZD-cEL0u_upvJ9icDslCQcZ6rEh1ybV-M3mDa8J0NOgzlqtwDjvg/exec";
 
 // ---Agendador---
 let remoteAppointments = [];
@@ -890,7 +890,6 @@ const fetchAppointmentsFromSheet = async (forceRefresh = false) => {
 };
 
 //Función para enviar la cita a Google Sheets
-//Función para enviar la cita a Google Sheets
 const sendAppointmentToGoogleSheets = async (appointment) => {
   if (!APPOINTMENT_ENDPOINT) {
     return {
@@ -1269,31 +1268,43 @@ const initOpinionStars = () => {
 // Inicializar las estrellas
 initOpinionStars();
 
-const showMessage = (message, type = "success") => {
+//Función para mostrar mensajes al usuario
+const showMessage = (message, type = "success", duration = 3000) => {
   const existing = document.getElementById("app-message");
 
-  if (existing) existing.remove();
+  if (existing) {
+    existing.remove();
+  }
 
   const div = document.createElement("div");
 
   div.id = "app-message";
 
   div.style.cssText = `
-        position:fixed;
-        bottom:20px;
-        left:50%;
-        transform:translateX(-50%);
-        z-index:9999;
-        min-width:320px;
-        max-width:90%;
-        padding:15px 20px;
-        border-radius:12px;
-        color:#fff;
-        font-weight:600;
-        text-align:center;
-        box-shadow:0 8px 25px rgba(0,0,0,.25);
-        transition:.3s;
-    `;
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 99999;
+
+    min-width: 320px;
+    max-width: 90%;
+
+    padding: 15px 20px;
+
+    border-radius: 12px;
+
+    color: #fff;
+
+    font-weight: 600;
+
+    text-align: center;
+
+    box-shadow:
+      0 8px 25px rgba(0,0,0,.25);
+
+    transition: .3s;
+  `;
 
   switch (type) {
     case "error":
@@ -1316,13 +1327,74 @@ const showMessage = (message, type = "success") => {
 
   document.body.appendChild(div);
 
-  setTimeout(() => {
-    div.remove();
-  }, 3000);
+  /*
+   * duration = 0
+   * significa:
+   *
+   * mantener el mensaje hasta que
+   * otro showMessage() lo reemplace.
+   */
+  if (duration > 0) {
+    setTimeout(() => {
+      if (div.parentNode) {
+        div.remove();
+      }
+    }, duration);
+  }
+};
+
+//Función especial para verificar la eliminación
+const verifyAppointmentExistsOnServer = async (appointmentId) => {
+  if (!APPOINTMENT_ENDPOINT) {
+    return null;
+  }
+
+  const params = new URLSearchParams({
+    action: "getAppointments",
+
+    _: String(Date.now()),
+  });
+
+  const url = `${APPOINTMENT_ENDPOINT}?${params.toString()}`;
+
+  try {
+    /*
+     * Una consulta corta y directa.
+     *
+     * NO utilizamos la caché local.
+     */
+    const result = await requestAppsScript(url, {
+      retries: 1,
+      timeout: 10000,
+      useFetchFirst: false,
+    });
+
+    if (
+      !result ||
+      result.success !== true ||
+      !Array.isArray(result.appointments)
+    ) {
+      return null;
+    }
+
+    const exists = result.appointments.some(
+      (item) => String(item.id) === String(appointmentId),
+    );
+
+    return exists;
+  } catch (error) {
+    console.warn("No fue posible verificar la cita:", error);
+
+    /*
+     * null significa:
+     * no pudimos determinarlo.
+     */
+    return null;
+  }
 };
 
 //Función àra borrar una cita agendada teniendo en cuenta localStorage o desde la URL
-const deleteAppointment = async (appointmentId, suppliedToken = "") => {
+const deleteAppointment = async (appointmentId, providedDeleteToken = "") => {
   if (!APPOINTMENT_ENDPOINT) {
     showMessage("No hay endpoint configurado.", "error");
 
@@ -1336,17 +1408,11 @@ const deleteAppointment = async (appointmentId, suppliedToken = "") => {
   }
 
   // =========================================
-  // OBTENER TOKEN
-  // =========================================
-  //
-  // Puede venir:
-  //
-  // 1. Desde el enlace del correo.
-  // 2. Desde localStorage.
+  // TOKEN
   // =========================================
 
   const deleteToken =
-    String(suppliedToken || "").trim() ||
+    String(providedDeleteToken || "").trim() ||
     getAppointmentDeleteToken(appointmentId);
 
   if (!deleteToken) {
@@ -1360,49 +1426,148 @@ const deleteAppointment = async (appointmentId, suppliedToken = "") => {
 
     id: String(appointmentId),
 
-    deleteToken: deleteToken,
+    deleteToken: String(deleteToken),
 
     _: String(Date.now()),
   });
 
   const requestUrl = `${APPOINTMENT_ENDPOINT}?${params.toString()}`;
 
-  showMessage("Cancelando tu cita...", "warning");
+  /*
+   * Mensaje permanente mientras
+   * estamos procesando.
+   */
+  showMessage("Eliminando tu cita. Por favor espera...", "warning", 0);
 
   try {
+    /*
+     * IMPORTANTE:
+     *
+     * Para eliminar NO hacemos varios
+     * reintentos automáticos.
+     *
+     * La primera solicitud podría haber
+     * eliminado la fila aunque la respuesta
+     * JSONP no vuelva.
+     */
     const result = await requestAppsScript(requestUrl, {
-      retries: 2,
-      timeout: 20000,
+      retries: 1,
+      timeout: 10000,
       useFetchFirst: false,
     });
 
-    console.log("Resultado cancelar cita:", result);
+    console.log("Respuesta eliminar cita:", result);
 
     if (result && result.success === true) {
-      /*
-       * Si este navegador también tenía
-       * guardado el token, lo eliminamos.
-       */
+      // ================================
+      // ELIMINACIÓN CONFIRMADA
+      // ================================
+
       removeAppointmentDeleteToken(appointmentId);
 
-      showMessage("Tu cita fue cancelada correctamente.", "success");
+      /*
+       * Quitar inmediatamente de la
+       * memoria local.
+       *
+       * No esperamos otra consulta.
+       */
+      remoteAppointments = remoteAppointments.filter(
+        (item) => String(item.id) !== String(appointmentId),
+      );
+
+      remoteAppointmentsLoaded = true;
+
+      appointmentsLoadedAt = Date.now();
+
+      showMessage("Tu cita fue eliminada correctamente.", "success", 5000);
 
       return true;
     }
 
-    showMessage(result?.error || "No fue posible cancelar la cita.", "error");
-
-    return false;
+    /*
+     * Si Apps Script contestó expresamente
+     * con un error, comprobamos igualmente
+     * si la cita todavía existe.
+     */
+    showMessage("Verificando la eliminación...", "info", 0);
   } catch (error) {
-    console.error("Error cancelando cita:", error);
+    /*
+     * MUY IMPORTANTE:
+     *
+     * Un timeout NO significa necesariamente
+     * que Apps Script no ejecutó la operación.
+     *
+     * Tu captura demuestra exactamente esto:
+     * Sheets borró la fila aunque JSONP falló.
+     */
+    console.warn("No llegó la confirmación de eliminación:", error);
 
-    showMessage("Error de conexión con el servidor.", "error");
+    showMessage(
+      "La solicitud fue enviada. Verificando si la cita fue eliminada...",
+      "info",
+      0,
+    );
+  }
+
+  // =========================================
+  // VERIFICAR EL ESTADO REAL
+  // =========================================
+
+  const stillExists = await verifyAppointmentExistsOnServer(appointmentId);
+
+  // =========================================
+  // YA NO EXISTE
+  // =========================================
+
+  if (stillExists === false) {
+    console.log("La cita ya no existe en Google Sheets.");
+
+    removeAppointmentDeleteToken(appointmentId);
+
+    /*
+     * Eliminar también de la memoria local.
+     */
+    remoteAppointments = remoteAppointments.filter(
+      (item) => String(item.id) !== String(appointmentId),
+    );
+
+    remoteAppointmentsLoaded = true;
+
+    appointmentsLoadedAt = Date.now();
+
+    showMessage("Tu cita fue eliminada correctamente.", "success", 5000);
+
+    return true;
+  }
+
+  // =========================================
+  // TODAVÍA EXISTE
+  // =========================================
+
+  if (stillExists === true) {
+    showMessage(
+      "No fue posible eliminar la cita. Inténtalo nuevamente.",
+      "error",
+      5000,
+    );
 
     return false;
   }
+
+  // =========================================
+  // GOOGLE TAMPOCO RESPONDIÓ AL VERIFICAR
+  // =========================================
+
+  showMessage(
+    "No pudimos confirmar el resultado. Actualiza la agenda en unos segundos.",
+    "warning",
+    6000,
+  );
+
+  return false;
 };
 
-//Funcion
+//Funcion para cancelar la cita desde la URL
 const handleAppointmentCancellationFromUrl = async () => {
   const urlParams = new URLSearchParams(window.location.search);
 
@@ -1476,7 +1641,7 @@ const cleanAppointmentCancellationUrl = () => {
   }
 };
 
-//Función para mostrar el modal de éxito al cancelar una cita 
+//Función para mostrar el modal de éxito al cancelar una cita
 const showCancellationSuccessModal = () => {
   if (!agendarModal) {
     showMessage("Tu cita fue cancelada correctamente.", "success");
@@ -1548,14 +1713,9 @@ const showCancellationSuccessModal = () => {
 };
 
 //Lógica para cuando llegue el botón de cancelar la cita
-document.addEventListener(
-  "DOMContentLoaded",
-  () => {
-
-    handleAppointmentCancellationFromUrl();
-
-  }
-);
+document.addEventListener("DOMContentLoaded", () => {
+  handleAppointmentCancellationFromUrl();
+});
 
 const renderAgendaList = (containerEl) => {
   if (!containerEl) return;
@@ -1642,13 +1802,20 @@ const renderAgendaList = (containerEl) => {
     button.addEventListener("click", async () => {
       const appointmentId = button.dataset.id;
 
-      if (!appointmentId) return;
+      if (!appointmentId) {
+        return;
+      }
 
       const confirmed = confirm("¿Deseas eliminar esta cita de la agenda?");
 
-      if (!confirmed) return;
+      if (!confirmed) {
+        return;
+      }
 
-      // Bloquear el botón
+      // ==========================
+      // BLOQUEAR BOTÓN
+      // ==========================
+
       button.disabled = true;
 
       button.style.pointerEvents = "none";
@@ -1661,22 +1828,47 @@ const renderAgendaList = (containerEl) => {
         const success = await deleteAppointment(appointmentId);
 
         if (success) {
-          await fetchAppointmentsFromSheet(true);
-
+          /*
+           * deleteAppointment() ya eliminó
+           * la cita de remoteAppointments.
+           *
+           * Por eso actualizamos la vista
+           * INMEDIATAMENTE.
+           */
           renderAgendaList(containerEl);
-        } else {
-          showMessage("No se pudo eliminar la cita.", "error");
 
-          button.disabled = false;
+          /*
+           * Sin bloquear la interfaz,
+           * intentamos sincronizar otra vez
+           * con Google en segundo plano.
+           */
+          fetchAppointmentsFromSheet(true)
+            .then(() => {
+              renderAgendaList(containerEl);
+            })
+            .catch((error) => {
+              console.warn(
+                "No fue posible refrescar la agenda después de eliminar:",
+                error,
+              );
+            });
 
-          button.style.pointerEvents = "";
-
-          button.innerHTML = textoOriginal;
+          return;
         }
-      } catch (error) {
-        console.error(error);
 
-        showMessage("Ocurrió un error eliminando la cita.", "error");
+        // ==========================
+        // NO SE PUDO CONFIRMAR
+        // ==========================
+
+        button.disabled = false;
+
+        button.style.pointerEvents = "";
+
+        button.innerHTML = textoOriginal;
+      } catch (error) {
+        console.error("Error procesando eliminación:", error);
+
+        showMessage("Ocurrió un error eliminando la cita.", "error", 5000);
 
         button.disabled = false;
 

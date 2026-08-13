@@ -12,7 +12,7 @@ Pasos para crear un Web App en Google Apps Script:
 
 const SHEET_ID = "1DfzxZCJrruEcPZ52V00vSx8uU1YQ09TC38IrihbJK68";
 const SHEET_NAME = "Citas";
-const OPINIONES_SHEET_NAME = 'Opiniones';
+const OPINIONES_SHEET_NAME = "Opiniones";
 const PUBLIC_CARD_URL = "https://sanditor.github.io/tarjeta_presentacion/";
 
 function getSheet() {
@@ -43,7 +43,6 @@ function getSheet() {
 }
 
 function getOpinionesSheet() {
-
   const ss = SpreadsheetApp.openById(SHEET_ID);
 
   let sheet = ss.getSheetByName(OPINIONES_SHEET_NAME);
@@ -52,14 +51,7 @@ function getOpinionesSheet() {
     sheet = ss.insertSheet(OPINIONES_SHEET_NAME);
   }
 
-  const headers = [
-    'id',
-    'name',
-    'service',
-    'rating',
-    'comment',
-    'createdAt'
-  ];
+  const headers = ["id", "name", "service", "rating", "comment", "createdAt"];
 
   if (sheet.getLastRow() === 0) {
     sheet.appendRow(headers);
@@ -81,8 +73,8 @@ function doGet(e) {
       return saveAppointment(params, callback);
 
     case "deleteAppointment":
-      return deleteAppointment(params.id,params.deleteToken, callback);
-    
+      return deleteAppointment(params.id, params.deleteToken, callback);
+
     case "getOpiniones":
       return getOpiniones(callback);
 
@@ -103,8 +95,7 @@ function doGet(e) {
 function getAppointments(callback) {
   const sheet = getSheet();
 
-  const values =
-    sheet.getDataRange().getValues();
+  const values = sheet.getDataRange().getValues();
 
   if (values.length <= 1) {
     return buildResponse(
@@ -112,64 +103,40 @@ function getAppointments(callback) {
         success: true,
         appointments: [],
       },
-      callback
+      callback,
     );
   }
 
   const headers = values[0];
 
-  const idIndex =
-    headers.indexOf("id");
+  const idIndex = headers.indexOf("id");
 
-  const dateIndex =
-    headers.indexOf("date");
+  const dateIndex = headers.indexOf("date");
 
-  const timeIndex =
-    headers.indexOf("time");
+  const timeIndex = headers.indexOf("time");
 
-  const createdAtIndex =
-    headers.indexOf("createdAt");
+  const createdAtIndex = headers.indexOf("createdAt");
 
-  const sourceIndex =
-    headers.indexOf("source");
+  const sourceIndex = headers.indexOf("source");
 
-  const appointments =
-    values
-      .slice(1)
-      .map((row) => ({
-        id:
-          idIndex >= 0
-            ? row[idIndex]
-            : "",
+  const appointments = values.slice(1).map((row) => ({
+    id: idIndex >= 0 ? row[idIndex] : "",
 
-        date:
-          dateIndex >= 0
-            ? row[dateIndex]
-            : "",
+    date: dateIndex >= 0 ? row[dateIndex] : "",
 
-        time:
-          timeIndex >= 0
-            ? row[timeIndex]
-            : "",
+    time: timeIndex >= 0 ? row[timeIndex] : "",
 
-        createdAt:
-          createdAtIndex >= 0
-            ? row[createdAtIndex]
-            : "",
+    createdAt: createdAtIndex >= 0 ? row[createdAtIndex] : "",
 
-        source:
-          sourceIndex >= 0
-            ? row[sourceIndex]
-            : "",
-      }));
+    source: sourceIndex >= 0 ? row[sourceIndex] : "",
+  }));
 
   return buildResponse(
     {
       success: true,
-      appointments:
-        appointments,
+      appointments: appointments,
     },
-    callback
+    callback,
   );
 }
 
@@ -177,108 +144,220 @@ function hashDeleteToken(token) {
   const digest = Utilities.computeDigest(
     Utilities.DigestAlgorithm.SHA_256,
     String(token),
-    Utilities.Charset.UTF_8
+    Utilities.Charset.UTF_8,
   );
 
   return digest
     .map(function (byte) {
-      const value =
-        byte < 0
-          ? byte + 256
-          : byte;
+      const value = byte < 0 ? byte + 256 : byte;
 
-      return value
-        .toString(16)
-        .padStart(2, "0");
+      return value.toString(16).padStart(2, "0");
     })
     .join("");
 }
 
 function saveAppointment(params, callback) {
-  const sheet = getSheet();
+  const lock = LockService.getScriptLock();
 
-  const data = sheet.getDataRange().getValues();
+  let lockObtained = false;
+  let appointmentSaved = false;
 
-  // ============================
-  // VALIDAR TOKEN DE CANCELACIÓN
-  // ============================
+  try {
+    // =========================================
+    // BLOQUEAR SOLO LA PARTE CRÍTICA
+    // =========================================
 
-  const deleteToken =
-    String(params.deleteToken || "").trim();
+    lock.waitLock(15000);
+    lockObtained = true;
 
-  if (!deleteToken) {
-    return buildResponse(
-      {
-        success: false,
-        error:
-          "No se recibió el token de seguridad de la cita.",
-      },
-      callback
-    );
-  }
+    const sheet = getSheet();
+    const data = sheet.getDataRange().getValues();
 
-  if (!/^[a-f0-9]{64}$/i.test(deleteToken)) {
-    return buildResponse(
-      {
-        success: false,
-        error:
-          "El token de seguridad no es válido.",
-      },
-      callback
-    );
-  }
+    const id = String(params.id || "").trim();
 
-  // ============================
-  // VERIFICAR HORARIO
-  // ============================
+    const date = String(params.date || "").trim();
 
-  for (let i = 1; i < data.length; i++) {
-    if (
-      String(data[i][1]) ===
-        String(params.date) &&
-      String(data[i][2]) ===
-        String(params.time)
-    ) {
+    const time = String(params.time || "").trim();
+
+    const deleteToken = String(params.deleteToken || "").trim();
+
+    // =========================================
+    // VALIDACIONES
+    // =========================================
+
+    if (!id) {
       return buildResponse(
         {
           success: false,
-          error:
-            "Ese horario ya fue reservado.",
+          error: "No se recibió el identificador de la cita.",
         },
-        callback
+        callback,
       );
     }
+
+    if (!date || !time) {
+      return buildResponse(
+        {
+          success: false,
+          error: "La fecha y la hora son obligatorias.",
+        },
+        callback,
+      );
+    }
+
+    if (!deleteToken) {
+      return buildResponse(
+        {
+          success: false,
+          error: "No se recibió el token de seguridad.",
+        },
+        callback,
+      );
+    }
+
+    if (!/^[a-f0-9]{64}$/i.test(deleteToken)) {
+      return buildResponse(
+        {
+          success: false,
+          error: "El token de seguridad no es válido.",
+        },
+        callback,
+      );
+    }
+
+    // =========================================
+    // CONTROL DE DUPLICADO POR ID
+    // =========================================
+
+    for (let i = 1; i < data.length; i++) {
+      const existingId = String(data[i][0] || "").trim();
+
+      if (existingId === id) {
+        console.log("Cita ya procesada:", id);
+
+        return buildResponse(
+          {
+            success: true,
+            duplicate: true,
+            id: id,
+          },
+          callback,
+        );
+      }
+    }
+
+    // =========================================
+    // CONTROL DE HORARIO
+    // =========================================
+
+    for (let i = 1; i < data.length; i++) {
+      const existingDate = String(data[i][1] || "");
+
+      const existingTime = String(data[i][2] || "");
+
+      if (existingDate === date && existingTime === time) {
+        return buildResponse(
+          {
+            success: false,
+            error: "Ese horario ya fue reservado.",
+          },
+          callback,
+        );
+      }
+    }
+
+    // =========================================
+    // GUARDAR
+    // =========================================
+
+    const deleteTokenHash = hashDeleteToken(deleteToken);
+
+    sheet.appendRow([
+      id,
+      date,
+      time,
+      params.clientName,
+      params.clientEmail,
+      params.description,
+      params.createdAt,
+      params.source,
+      deleteTokenHash,
+    ]);
+
+    SpreadsheetApp.flush();
+
+    appointmentSaved = true;
+
+    // =========================================
+    // LIBERAR EL LOCK INMEDIATAMENTE
+    // =========================================
+
+    lock.releaseLock();
+    lockObtained = false;
+
+    console.log("Cita guardada:", id);
+
+    // =========================================
+    // CORREOS
+    // =========================================
+    //
+    // Si el correo falla, NO debemos decir
+    // que la cita no se guardó.
+    // =========================================
+
+    try {
+      sendAppointmentEmails(params);
+    } catch (emailError) {
+      console.error("La cita fue guardada pero falló el correo:", emailError);
+    }
+
+    // =========================================
+    // RESPUESTA FINAL
+    // =========================================
+
+    return buildResponse(
+      {
+        success: true,
+        duplicate: false,
+        id: id,
+      },
+      callback,
+    );
+  } catch (error) {
+    console.error("saveAppointment:", error);
+
+    /*
+     * Si alcanzó a guardarse antes de producirse
+     * otro error, no informamos falsamente que
+     * la cita falló.
+     */
+    if (appointmentSaved) {
+      return buildResponse(
+        {
+          success: true,
+          saved: true,
+          warning: "La cita fue guardada correctamente.",
+        },
+        callback,
+      );
+    }
+
+    return buildResponse(
+      {
+        success: false,
+        error: error.message || "Error guardando la cita.",
+      },
+      callback,
+    );
+  } finally {
+    if (lockObtained) {
+      try {
+        lock.releaseLock();
+      } catch (error) {
+        // Ignorar
+      }
+    }
   }
-
-  // Nunca guardamos el token original.
-  const deleteTokenHash =
-    hashDeleteToken(deleteToken);
-
-  // ============================
-  // GUARDAR CITA
-  // ============================
-
-  sheet.appendRow([
-    params.id,
-    params.date,
-    params.time,
-    params.clientName,
-    params.clientEmail,
-    params.description,
-    params.createdAt,
-    params.source,
-    deleteTokenHash,
-  ]);
-
-  // Conservamos tus correos actuales
-  sendAppointmentEmails(params);
-
-  return buildResponse(
-    {
-      success: true,
-    },
-    callback
-  );
 }
 
 function sendAppointmentEmails(params) {
@@ -297,13 +376,9 @@ function sendAppointmentEmails(params) {
   const cancelUrl =
     PUBLIC_CARD_URL +
     "?cancelAppointment=" +
-    encodeURIComponent(
-      String(params.id || "")
-    ) +
+    encodeURIComponent(String(params.id || "")) +
     "&token=" +
-    encodeURIComponent(
-      String(params.deleteToken || "")
-    );
+    encodeURIComponent(String(params.deleteToken || ""));
 
   // ============================
   // CORREO PARA EL CLIENTE
@@ -575,129 +650,246 @@ function sendAppointmentEmails(params) {
   });
 }
 
-function deleteAppointment(
-  id,
-  deleteToken,
-  callback
-) {
-  const sheet = getSheet();
+function deleteAppointment(id, deleteToken, callback) {
+  const lock = LockService.getScriptLock();
 
-  const data =
-    sheet.getDataRange().getValues();
+  let lockObtained = false;
 
-  if (!id) {
-    return buildResponse(
-      {
-        success: false,
-        error:
-          "No se recibió el identificador de la cita.",
-      },
-      callback
-    );
-  }
+  try {
+    // ========================================
+    // BLOQUEAR OPERACIONES SIMULTÁNEAS
+    // ========================================
 
-  if (!deleteToken) {
-    return buildResponse(
-      {
-        success: false,
-        error:
-          "No tienes autorización para eliminar esta cita.",
-      },
-      callback
-    );
-  }
+    lock.waitLock(10000);
 
-  // Encabezados de Google Sheets
-  const headers = data[0];
+    lockObtained = true;
 
-  const idIndex =
-    headers.indexOf("id");
+    const appointmentIdToDelete = String(id || "").trim();
 
-  const tokenIndex =
-    headers.indexOf("deleteTokenHash");
+    const token = String(deleteToken || "").trim();
 
-  if (
-    idIndex === -1 ||
-    tokenIndex === -1
-  ) {
-    return buildResponse(
-      {
-        success: false,
-        error:
-          "La hoja de citas no está configurada correctamente.",
-      },
-      callback
-    );
-  }
+    // ========================================
+    // VALIDACIONES
+    // ========================================
 
-  // Hash del token enviado por el navegador
-  const receivedHash =
-    hashDeleteToken(deleteToken);
+    if (!appointmentIdToDelete) {
+      return buildResponse(
+        {
+          success: false,
+          error: "No se recibió el identificador de la cita.",
+        },
+        callback,
+      );
+    }
 
-  for (
-    let i = 1;
-    i < data.length;
-    i++
-  ) {
-    const appointmentId =
-      String(data[i][idIndex]);
+    if (!token) {
+      return buildResponse(
+        {
+          success: false,
+          error: "No tienes autorización para eliminar esta cita.",
+        },
+        callback,
+      );
+    }
 
-    if (
-      appointmentId === String(id)
-    ) {
-      const storedHash =
-        String(
-          data[i][tokenIndex] || ""
-        ).trim();
+    /*
+     * El token generado por main.js
+     * tiene exactamente 64 caracteres
+     * hexadecimales.
+     */
+    if (!/^[a-f0-9]{64}$/i.test(token)) {
+      return buildResponse(
+        {
+          success: false,
+          error: "El token de cancelación no es válido.",
+        },
+        callback,
+      );
+    }
 
-      // Citas antiguas sin token
-      if (!storedHash) {
-        return buildResponse(
-          {
-            success: false,
-            error:
-              "Esta cita no dispone de autorización de cancelación.",
-          },
-          callback
-        );
-      }
+    // ========================================
+    // HASH DEL TOKEN RECIBIDO
+    // ========================================
 
-      // El token no pertenece a esa cita
-      if (
-        storedHash !== receivedHash
-      ) {
-        return buildResponse(
-          {
-            success: false,
-            error:
-              "No tienes autorización para eliminar esta cita.",
-          },
-          callback
-        );
-      }
+    const receivedHash = hashDeleteToken(token);
 
-      // Token correcto
-      sheet.deleteRow(i + 1);
+    // ========================================
+    // CONTROL DE REINTENTOS
+    // ========================================
+    //
+    // Puede ocurrir esto:
+    //
+    // 1. Apps Script elimina la cita.
+    // 2. El navegador no recibe la respuesta.
+    // 3. JSONP genera timeout.
+    // 4. main.js intenta nuevamente.
+    //
+    // En ese caso NO queremos responder:
+    // "La cita no existe".
+    //
+    // Guardaremos temporalmente la evidencia
+    // de que esa cita ya fue eliminada.
+    // ========================================
 
-      SpreadsheetApp.flush();
+    const cache = CacheService.getScriptCache();
+
+    const deletedCacheKey = "deletedAppointment_" + appointmentIdToDelete;
+
+    const previousDeleteHash = cache.get(deletedCacheKey);
+
+    /*
+     * Si el MISMO token ya eliminó esta
+     * misma cita recientemente,
+     * consideramos este reintento exitoso.
+     */
+    if (previousDeleteHash && previousDeleteHash === receivedHash) {
+      console.log("Reintento de cancelación detectado:", appointmentIdToDelete);
 
       return buildResponse(
         {
           success: true,
+          alreadyDeleted: true,
+          id: appointmentIdToDelete,
         },
-        callback
+        callback,
       );
     }
-  }
 
-  return buildResponse(
-    {
-      success: false,
-      error:
-        "No se encontró la cita.",
-    },
-    callback
-  );
+    // ========================================
+    // LEER HOJA
+    // ========================================
+
+    const sheet = getSheet();
+
+    const data = sheet.getDataRange().getValues();
+
+    const headers = data[0];
+
+    const idIndex = headers.indexOf("id");
+
+    const tokenIndex = headers.indexOf("deleteTokenHash");
+
+    if (idIndex === -1 || tokenIndex === -1) {
+      return buildResponse(
+        {
+          success: false,
+          error: "La hoja de citas no está configurada correctamente.",
+        },
+        callback,
+      );
+    }
+
+    // ========================================
+    // BUSCAR CITA
+    // ========================================
+
+    for (let i = 1; i < data.length; i++) {
+      const appointmentId = String(data[i][idIndex] || "").trim();
+
+      /*
+       * No es la cita que buscamos.
+       */
+      if (appointmentId !== appointmentIdToDelete) {
+        continue;
+      }
+
+      const storedHash = String(data[i][tokenIndex] || "").trim();
+
+      // ========================================
+      // CITA ANTIGUA SIN TOKEN
+      // ========================================
+
+      if (!storedHash) {
+        return buildResponse(
+          {
+            success: false,
+            error: "Esta cita no dispone de autorización de cancelación.",
+          },
+          callback,
+        );
+      }
+
+      // ========================================
+      // COMPROBAR TOKEN
+      // ========================================
+
+      if (storedHash !== receivedHash) {
+        return buildResponse(
+          {
+            success: false,
+            error: "No tienes autorización para eliminar esta cita.",
+          },
+          callback,
+        );
+      }
+
+      // ========================================
+      // TOKEN CORRECTO: ELIMINAR
+      // ========================================
+
+      sheet.deleteRow(i + 1);
+
+      SpreadsheetApp.flush();
+
+      // ========================================
+      // RECORDAR LA ELIMINACIÓN
+      // ========================================
+      //
+      // Durante 10 minutos Apps Script sabrá
+      // que esta misma cita ya fue eliminada
+      // con este mismo token.
+      //
+      // 600 segundos = 10 minutos.
+      // ========================================
+
+      cache.put(deletedCacheKey, receivedHash, 600);
+
+      console.log("Cita cancelada correctamente:", appointmentIdToDelete);
+
+      return buildResponse(
+        {
+          success: true,
+          alreadyDeleted: false,
+          id: appointmentIdToDelete,
+        },
+        callback,
+      );
+    }
+
+    // ========================================
+    // NO SE ENCONTRÓ LA CITA
+    // ========================================
+
+    return buildResponse(
+      {
+        success: false,
+        error: "La cita ya no existe o ya fue cancelada.",
+      },
+      callback,
+    );
+  } catch (error) {
+    console.error("deleteAppointment:", error);
+
+    return buildResponse(
+      {
+        success: false,
+        error: error.message || "No fue posible cancelar la cita.",
+      },
+      callback,
+    );
+  } finally {
+    // ========================================
+    // LIBERAR LOCK
+    // ========================================
+
+    if (lockObtained) {
+      try {
+        lock.releaseLock();
+      } catch (error) {
+        // Ignorar error al liberar lock.
+      }
+    }
+  }
 }
 
 function buildResponse(obj, callback) {
@@ -713,49 +905,45 @@ function buildResponse(obj, callback) {
 }
 
 function getOpiniones(callback) {
-
   const sheet = getOpinionesSheet();
 
   const values = sheet.getDataRange().getValues();
 
   if (values.length <= 1) {
-
-    return buildResponse({
-      success: true,
-      opiniones: []
-    }, callback);
-
+    return buildResponse(
+      {
+        success: true,
+        opiniones: [],
+      },
+      callback,
+    );
   }
 
   const headers = values[0];
 
-  const opiniones = values.slice(1).map(row => {
-
+  const opiniones = values.slice(1).map((row) => {
     let obj = {};
 
     headers.forEach((header, index) => {
-
       obj[header] = row[index];
-
     });
 
     return obj;
-
   });
 
-  return buildResponse({
-    success: true,
-    opiniones: opiniones
-  }, callback);
-
+  return buildResponse(
+    {
+      success: true,
+      opiniones: opiniones,
+    },
+    callback,
+  );
 }
 
 function saveOpinion(params, callback) {
-
   const lock = LockService.getScriptLock();
 
   try {
-
     /*
      * Evita que dos solicitudes simultáneas
      * escriban al mismo tiempo.
@@ -764,59 +952,43 @@ function saveOpinion(params, callback) {
 
     const sheet = getOpinionesSheet();
 
-    const id =
-      String(params.id || "").trim();
+    const id = String(params.id || "").trim();
 
-    const name =
-      String(params.name || "").trim();
+    const name = String(params.name || "").trim();
 
-    const service =
-      String(params.service || "").trim();
+    const service = String(params.service || "").trim();
 
-    const rating =
-      String(params.rating || "").trim();
+    const rating = String(params.rating || "").trim();
 
-    const comment =
-      String(params.comment || "").trim();
+    const comment = String(params.comment || "").trim();
 
     // ==========================
     // VALIDACIONES
     // ==========================
 
-    if (
-      !id ||
-      !name ||
-      !service ||
-      !rating ||
-      !comment
-    ) {
-
+    if (!id || !name || !service || !rating || !comment) {
       return buildResponse(
         {
           success: false,
-          error:
-            "Todos los campos son obligatorios."
+          error: "Todos los campos son obligatorios.",
         },
-        callback
+        callback,
       );
     }
 
-    const ratingNumber =
-      Number(rating);
+    const ratingNumber = Number(rating);
 
     if (
       !Number.isInteger(ratingNumber) ||
       ratingNumber < 1 ||
       ratingNumber > 5
     ) {
-
       return buildResponse(
         {
           success: false,
-          error:
-            "La calificación debe estar entre 1 y 5."
+          error: "La calificación debe estar entre 1 y 5.",
         },
-        callback
+        callback,
       );
     }
 
@@ -824,26 +996,14 @@ function saveOpinion(params, callback) {
     // CONTROL DE DUPLICADOS
     // ==========================
 
-    const lastRow =
-      sheet.getLastRow();
+    const lastRow = sheet.getLastRow();
 
     if (lastRow > 1) {
+      const existingIds = sheet
+        .getRange(2, 1, lastRow - 1, 1)
+        .getDisplayValues();
 
-      const existingIds =
-        sheet
-          .getRange(
-            2,
-            1,
-            lastRow - 1,
-            1
-          )
-          .getDisplayValues();
-
-      const alreadyExists =
-        existingIds.some(
-          (row) =>
-            String(row[0]) === id
-        );
+      const alreadyExists = existingIds.some((row) => String(row[0]) === id);
 
       /*
        * La solicitud ya fue procesada.
@@ -853,14 +1013,13 @@ function saveOpinion(params, callback) {
        * nuevamente.
        */
       if (alreadyExists) {
-
         return buildResponse(
           {
             success: true,
             duplicate: true,
-            id: id
+            id: id,
           },
-          callback
+          callback,
         );
       }
     }
@@ -869,21 +1028,13 @@ function saveOpinion(params, callback) {
     // GUARDAR
     // ==========================
 
-    const createdAt =
-      Utilities.formatDate(
-        new Date(),
-        Session.getScriptTimeZone(),
-        "dd/MM/yyyy HH:mm:ss"
-      );
+    const createdAt = Utilities.formatDate(
+      new Date(),
+      Session.getScriptTimeZone(),
+      "dd/MM/yyyy HH:mm:ss",
+    );
 
-    sheet.appendRow([
-      id,
-      name,
-      service,
-      ratingNumber,
-      comment,
-      createdAt
-    ]);
+    sheet.appendRow([id, name, service, ratingNumber, comment, createdAt]);
 
     SpreadsheetApp.flush();
 
@@ -891,30 +1042,21 @@ function saveOpinion(params, callback) {
       {
         success: true,
         duplicate: false,
-        id: id
+        id: id,
       },
-      callback
+      callback,
     );
-
   } catch (error) {
-
-    console.error(
-      "saveOpinion:",
-      error
-    );
+    console.error("saveOpinion:", error);
 
     return buildResponse(
       {
         success: false,
-        error:
-          error.message ||
-          "Error guardando la opinión."
+        error: error.message || "Error guardando la opinión.",
       },
-      callback
+      callback,
     );
-
   } finally {
-
     /*
      * Liberar LockService solamente
      * si realmente obtuvimos el lock.
