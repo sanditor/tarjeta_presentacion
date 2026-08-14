@@ -162,7 +162,7 @@ const APPOINTMENTS_PER_PAGE = 2;
 // --- Opiniones ---
 let remoteOpiniones = [];
 let opinionesPage = 1;
-const OPINIONES_PER_PAGE = ;
+const OPINIONES_PER_PAGE = 2;
 
 // Control de carga y caché
 let opinionesLoaded = false;
