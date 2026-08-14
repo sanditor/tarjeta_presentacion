@@ -162,7 +162,7 @@ const APPOINTMENTS_PER_PAGE = 2;
 // --- Opiniones ---
 let remoteOpiniones = [];
 let opinionesPage = 1;
-const OPINIONES_PER_PAGE = 3;
+const OPINIONES_PER_PAGE = ;
 
 // Control de carga y caché
 let opinionesLoaded = false;
@@ -455,8 +455,7 @@ const requestAppsScript = async (
   );
 };
 
-/*funciones para las opiniones
-Función para traer las opiniones*/
+//Función para traer las opiniones
 const fetchOpinionesFromSheet = async (forceRefresh = false) => {
   if (!APPOINTMENT_ENDPOINT) {
     console.error("No existe APPOINTMENT_ENDPOINT.");
