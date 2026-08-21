@@ -1996,6 +1996,7 @@ const renderAgendaList = (containerEl) => {
   });
 };
 
+//modal de agendamiento de citas
 const openAgendarModal = async () => {
   const modalContentEl = agendarModal.querySelector(".modal-content");
   modalContentEl.innerHTML = `
