@@ -59,32 +59,40 @@ body {
     width: 150px;
     height: 150px;
     margin-top: -105px;
+    flex-shrink: 0;
 }
 
-/* Estilo de la foto de perfil */
+/* Logo circular */
 .profile-pic {
-    width: 100%;
-    height: 100%;
-    border: 5px solid #0a9396;
-    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+    display: block;
+    width: 150px;
+    height: 150px;
+    border-radius: 50%;
+    object-fit: cover;
+    object-position: center;
+    padding: 0 !important;
+    margin: 0;
+    border: none !important;
+    background: transparent !important;
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.20);
 }
 
-/* Ícono de verificación */
+/* Verificado */
 .verification-badge {
     position: absolute;
-    top: 5px;
-    right: 5px;
-    background-color: #3b82f6;
-    /* Azul de Tailwind */
-    color: white;
+    top: 3px;
+    right: 3px;
     width: 32px;
     height: 32px;
-    border-radius: 9999px;
+    background-color: #3b82f6;
+    color: white;
+    border-radius: 50%;
+    border: 3px solid white;
     display: flex;
     align-items: center;
     justify-content: center;
-    border: 3px solid white;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+    z-index: 5;
 }
 
 /* Estilo general para los botones de acción principal */
