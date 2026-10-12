@@ -178,6 +178,135 @@ const formatDateKey = (date) => {
   return `${year}-${month}-${day}`;
 };
 
+// =====================================================
+// FESTIVOS NACIONALES DE COLOMBIA
+// Ley 51 de 1983 - Ley Emiliani
+// =====================================================
+
+// Calcula el Domingo de Pascua para cualquier año
+const getEasterSunday = (year) => {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+
+  return new Date(year, month - 1, day);
+};
+
+// Sumar días a una fecha
+const addDays = (date, days) => {
+  const result = new Date(date);
+  result.setDate(result.getDate() + days);
+  return result;
+};
+
+// Trasladar un festivo al lunes siguiente,
+// según Ley Emiliani
+const moveToNextMonday = (date) => {
+  const result = new Date(date);
+
+  if (result.getDay() === 1) {
+    return result;
+  }
+
+  const daysUntilMonday = (8 - result.getDay()) % 7;
+  result.setDate(result.getDate() + daysUntilMonday);
+
+  return result;
+};
+
+// Retorna los festivos colombianos del año
+const getColombiaHolidays = (year) => {
+  const holidays = new Map();
+
+  const addHoliday = (date, name) => {
+    holidays.set(formatDateKey(date), name);
+  };
+
+  // ==========================================
+  // FESTIVOS FIJOS - NO SE TRASLADAN
+  // ==========================================
+  addHoliday(new Date(year, 0, 1), "Año Nuevo");
+  addHoliday(new Date(year, 4, 1), "Día del Trabajo");
+  addHoliday(new Date(year, 6, 20), "Día de la Independencia");
+  addHoliday(new Date(year, 7, 7), "Batalla de Boyacá");
+  addHoliday(new Date(year, 11, 8), "Inmaculada Concepción");
+  addHoliday(new Date(year, 11, 25), "Navidad");
+
+  // ==========================================
+  // FESTIVOS LEY EMILIANI
+  // Se trasladan al lunes siguiente
+  // ==========================================
+  addHoliday(moveToNextMonday(new Date(year, 0, 6)), "Día de los Reyes Magos");
+
+  addHoliday(moveToNextMonday(new Date(year, 2, 19)), "Día de San José");
+
+  addHoliday(moveToNextMonday(new Date(year, 5, 29)), "San Pedro y San Pablo");
+
+  addHoliday(moveToNextMonday(new Date(year, 7, 15)), "Asunción de la Virgen");
+
+  addHoliday(moveToNextMonday(new Date(year, 9, 12)), "Día de la Raza");
+
+  addHoliday(moveToNextMonday(new Date(year, 10, 1)), "Todos los Santos");
+
+  addHoliday(
+    moveToNextMonday(new Date(year, 10, 11)),
+    "Independencia de Cartagena",
+  );
+
+  // ==========================================
+  // FESTIVOS RELACIONADOS CON SEMANA SANTA
+  // ==========================================
+  const easterSunday = getEasterSunday(year);
+
+  // Jueves Santo
+  addHoliday(addDays(easterSunday, -3), "Jueves Santo");
+
+  // Viernes Santo
+  addHoliday(addDays(easterSunday, -2), "Viernes Santo");
+
+  // Ascensión del Señor:
+  // 39 días después de Pascua y trasladado al lunes
+  addHoliday(
+    moveToNextMonday(addDays(easterSunday, 39)),
+    "Ascensión del Señor",
+  );
+
+  // Corpus Christi:
+  // 60 días después de Pascua y trasladado al lunes
+  addHoliday(moveToNextMonday(addDays(easterSunday, 60)), "Corpus Christi");
+
+  // Sagrado Corazón:
+  // 68 días después de Pascua y trasladado al lunes
+  addHoliday(
+    moveToNextMonday(addDays(easterSunday, 68)),
+    "Sagrado Corazón de Jesús",
+  );
+
+  return holidays;
+};
+
+const isColombiaHoliday = (date) => {
+  const holidays = getColombiaHolidays(date.getFullYear());
+  return holidays.has(formatDateKey(date));
+};
+
+const getColombiaHolidayName = (date) => {
+  const holidays = getColombiaHolidays(date.getFullYear());
+  return holidays.get(formatDateKey(date)) || "";
+};
+
 const normalizeTime = (time) => {
   if (!time && time !== 0) return "";
   if (typeof time === "string") {
@@ -2167,9 +2296,21 @@ const renderCalendar = () => {
     const dayDate = new Date(year, month, day);
     const dayOfWeek = dayDate.getDay();
 
-    if (dayDate.getTime() < todayTimestamp || dayOfWeek === 0) {
-      // Disable past days and Sundays
+    const holidayName = getColombiaHolidayName(dayDate);
+
+    const isPast = dayDate.getTime() < todayTimestamp;
+    const isSunday = dayOfWeek === 0;
+    const isHoliday = Boolean(holidayName);
+
+    if (isPast || isSunday || isHoliday) {
       dayEl.classList.add("disabled");
+
+      if (isHoliday) {
+        dayEl.classList.add("holiday");
+        dayEl.title = `Festivo: ${holidayName}`;
+      } else if (isSunday) {
+        dayEl.title = "Domingo - No disponible";
+      }
     } else {
       dayEl.addEventListener("click", () => selectDate(dayDate));
     }
@@ -2190,8 +2331,15 @@ const renderCalendar = () => {
 };
 
 const selectDate = (date) => {
+  // Protección adicional
+  if (date.getDay() === 0 || isColombiaHoliday(date)) {
+    return;
+  }
+
   selectedDate = date;
+
   renderCalendar();
+
   showTimeView();
 };
 
@@ -2227,11 +2375,11 @@ const renderTimeSlots = () => {
       "12:00",
       "14:00",
       "15:00",
-      "16:00"
+      "16:00",
     ];
   } else if (dayOfWeek === 6) {
     // Sábado
-    availableTimes = ["10:00", "11:00", "15:00","16:00", "17:00"];
+    availableTimes = ["10:00", "11:00", "15:00", "16:00", "17:00"];
   }
 
   if (availableTimes.length === 0) {

@@ -251,6 +251,28 @@ body {
     background-color: transparent;
 }
 
+/* Festivos nacionales de Colombia */
+.calendar-day.holiday {
+    color: #dc2626 !important;
+    background-color: #fef2f2 !important;
+    cursor: not-allowed !important;
+    font-weight: 600;
+    opacity: 0.65;
+    position: relative;
+}
+
+.calendar-day.holiday:hover {
+    transform: none !important;
+    background-color: #fef2f2 !important;
+}
+
+/* Evita que "hoy" aparezca naranja si además es festivo */
+.calendar-day.today.holiday {
+    background-color: #fef2f2 !important;
+    color: #dc2626 !important;
+    box-shadow: none;
+}
+
 .calendar-day.today {
     background-color: #ee9b00;
     color: white;
