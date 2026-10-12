@@ -150,6 +150,8 @@ const APPOINTMENT_ENDPOINT =
 // ---Agendador---
 let remoteAppointments = [];
 let remoteAppointmentsLoaded = false;
+let remoteBlockedSlots = [];
+let remoteBlockedSlotsLoaded = false;
 let appointmentsLoadingPromise = null;
 let appointmentsLoadedAt = 0;
 const APPOINTMENTS_CACHE_MS = 30000;
@@ -916,6 +918,22 @@ const isTimeSlotTaken = (date, time) => {
     return (
       formatDateKey(appointmentDate) === selectedKey &&
       normalizeTime(appointment.time) === normalizedTime
+    );
+  });
+};
+
+// =======================================
+// VERIFICAR SI EL ADMIN BLOQUEÓ UNA HORA
+// =======================================
+const isTimeSlotBlocked = (date, time) => {
+  const selectedKey = formatDateKey(date);
+
+  const normalizedTime = normalizeTime(time);
+
+  return remoteBlockedSlots.some((block) => {
+    return (
+      String(block.date) === selectedKey &&
+      normalizeTime(block.time) === normalizedTime
     );
   });
 };
@@ -2125,6 +2143,246 @@ const renderAgendaList = (containerEl) => {
   });
 };
 
+// =====================================================
+// PANEL PRIVADO - ADMINISTRAR DISPONIBILIDAD
+// =====================================================
+
+const openAdminAvailabilityPanel = () => {
+  // Evitar crear el modal varias veces
+  const oldModal = document.getElementById("admin-availability-modal");
+
+  if (oldModal) {
+    oldModal.remove();
+  }
+
+  const modal = document.createElement("div");
+
+  modal.id = "admin-availability-modal";
+  modal.className = "modal-overlay active";
+
+  modal.innerHTML = `
+    <div class="modal-content">
+
+      <div class="modal-header">
+
+        <h2 class="modal-header-title">
+          Administrar disponibilidad
+        </h2>
+
+        <button
+          id="close-admin-availability"
+          class="modal-close-btn"
+          type="button"
+        >
+          &times;
+        </button>
+
+      </div>
+
+      <div class="modal-body">
+
+        <div class="mb-5">
+
+          <label
+            for="admin-block-date"
+            class="block text-sm font-semibold text-gray-700 mb-2"
+          >
+            Selecciona una fecha
+          </label>
+
+          <input
+            id="admin-block-date"
+            type="date"
+            class="w-full border border-gray-300 rounded-lg px-3 py-3
+                   focus:outline-none focus:ring-2 focus:ring-[#005f73]"
+          />
+
+        </div>
+
+        <div
+          id="admin-hours-container"
+          class="hidden"
+        >
+
+          <p class="text-sm font-semibold text-gray-700 mb-3">
+            Selecciona uno o varios horarios:
+          </p>
+
+          <div
+            id="admin-hours-list"
+            class="grid grid-cols-2 sm:grid-cols-3 gap-3"
+          ></div>
+
+          <div class="mt-6 grid grid-cols-2 gap-3">
+
+            <button
+              id="admin-save-block"
+              type="button"
+              disabled
+              class="py-3 px-4 rounded-lg bg-red-600 text-white
+                     font-semibold opacity-50 cursor-not-allowed"
+            >
+              🔒 Bloquear
+            </button>
+
+            <button
+              id="admin-remove-block"
+              type="button"
+              disabled
+              class="py-3 px-4 rounded-lg bg-[#005f73] text-white
+                     font-semibold opacity-50 cursor-not-allowed"
+            >
+              🔓 Desbloquear
+            </button>
+
+          </div>
+
+          <p class="text-xs text-gray-400 text-center mt-3">
+            En el siguiente paso conectaremos estos botones con Google Sheets.
+          </p>
+
+        </div>
+
+      </div>
+
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  const closeBtn = document.getElementById("close-admin-availability");
+
+  const dateInput = document.getElementById("admin-block-date");
+
+  const hoursContainer = document.getElementById("admin-hours-container");
+
+  const hoursList = document.getElementById("admin-hours-list");
+
+  const blockBtn = document.getElementById("admin-save-block");
+
+  const unblockBtn = document.getElementById("admin-remove-block");
+
+  // No permitir fechas anteriores a hoy
+  dateInput.min = formatDateKey(new Date());
+
+  // =============================================
+  // CERRAR PANEL
+  // =============================================
+
+  closeBtn.addEventListener("click", () => {
+    modal.remove();
+  });
+
+  // =============================================
+  // MOSTRAR HORARIOS SEGÚN EL DÍA
+  // =============================================
+
+  dateInput.addEventListener("change", () => {
+    hoursList.innerHTML = "";
+
+    const value = dateInput.value;
+
+    if (!value) {
+      hoursContainer.classList.add("hidden");
+      return;
+    }
+
+    // Crear fecha local sin problemas de zona horaria
+    const [year, month, day] = value.split("-").map(Number);
+
+    const selectedAdminDate = new Date(year, month - 1, day);
+
+    const dayOfWeek = selectedAdminDate.getDay();
+
+    let availableTimes = [];
+
+    // Lunes a viernes
+    if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+      availableTimes = [
+        "09:00",
+        "10:00",
+        "11:00",
+        "12:00",
+        "14:00",
+        "15:00",
+        "16:00",
+      ];
+    }
+
+    // Sábado
+    else if (dayOfWeek === 6) {
+      availableTimes = ["10:00", "11:00", "15:00", "16:00", "17:00"];
+    }
+
+    // Domingo
+    else {
+      hoursContainer.classList.remove("hidden");
+
+      hoursList.innerHTML = `
+        <p class="col-span-full text-center text-red-500 text-sm">
+          Los domingos ya están cerrados.
+        </p>
+      `;
+
+      blockBtn.disabled = true;
+      unblockBtn.disabled = true;
+
+      return;
+    }
+
+    availableTimes.forEach((time) => {
+      const label = document.createElement("label");
+
+      label.className = `
+        flex items-center justify-center gap-2
+        border border-gray-300 rounded-lg
+        p-3 cursor-pointer
+        hover:bg-gray-50
+      `;
+
+      label.innerHTML = `
+        <input
+          type="checkbox"
+          class="admin-time-checkbox"
+          value="${time}"
+        >
+
+        <span class="font-mono font-semibold">
+          ${time}
+        </span>
+      `;
+
+      hoursList.appendChild(label);
+    });
+
+    hoursContainer.classList.remove("hidden");
+
+    // =============================================
+    // ACTIVAR BOTONES CUANDO HAYA HORAS MARCADAS
+    // =============================================
+
+    const checkboxes = hoursList.querySelectorAll(".admin-time-checkbox");
+
+    checkboxes.forEach((checkbox) => {
+      checkbox.addEventListener("change", () => {
+        const selected =
+          hoursList.querySelectorAll(".admin-time-checkbox:checked").length > 0;
+
+        blockBtn.disabled = !selected;
+        unblockBtn.disabled = !selected;
+
+        blockBtn.classList.toggle("opacity-50", !selected);
+
+        blockBtn.classList.toggle("cursor-not-allowed", !selected);
+
+        unblockBtn.classList.toggle("opacity-50", !selected);
+
+        unblockBtn.classList.toggle("cursor-not-allowed", !selected);
+      });
+    });
+  });
+};
+
 //modal de agendamiento de citas
 const openAgendarModal = async () => {
   const modalContentEl = agendarModal.querySelector(".modal-content");
@@ -2146,9 +2404,27 @@ const openAgendarModal = async () => {
                         <div id="calendar-days" class="grid grid-cols-7 gap-2 text-center"></div>
                         <div class="mt-4 border-t border-gray-200 pt-4">
                             <div class="flex items-center justify-between mb-2">
-                                <h4 class="text-sm font-semibold text-gray-700">Agenda</h4>
-                                <button id="refresh-agenda-btn" class="text-xs text-[#005f73] hover:underline">Actualizar</button>
+                            <h4 class="text-sm font-semibold text-gray-700">Agenda</h4>
+
+                            <div class="flex items-center gap-3">
+
+                                <button
+                                    id="admin-block-btn"
+                                    type="button"
+                                    class="hidden text-xs font-semibold text-red-600 hover:underline"
+                                >
+                                    🔒 Bloquear horarios
+                                </button>
+
+                                <button
+                                    id="refresh-agenda-btn"
+                                    class="text-xs text-[#005f73] hover:underline"
+                                >
+                                    Actualizar
+                                </button>
+
                             </div>
+                        </div>
                             <div id="agenda-list" class="space-y-2"></div>
                         </div>
                     </div>
@@ -2228,9 +2504,34 @@ const openAgendarModal = async () => {
     });
 
   agendarModal.classList.add("active");
+
+  // =======================================
+  // MODO ADMINISTRADOR
+  // =======================================
+
+  const params = new URLSearchParams(window.location.search);
+
+  if (params.get("admin") === "sandor") {
+    sessionStorage.setItem("sandorAdminMode", "true");
+
+    // Quitar ?admin=sandor de la barra del navegador
+    window.history.replaceState({}, document.title, window.location.pathname);
+  }
+
+  const adminMode = sessionStorage.getItem("sandorAdminMode") === "true";
+
+  const adminBlockBtn = document.getElementById("admin-block-btn");
+
+  if (adminMode && adminBlockBtn) {
+    adminBlockBtn.classList.remove("hidden");
+
+    adminBlockBtn.addEventListener("click", openAdminAvailabilityPanel);
+  }
+
   resetAppointmentView();
   renderCalendar();
   const agendaList = document.getElementById("agenda-list");
+
   if (agendaList) {
     agendaList.innerHTML =
       '<p class="text-sm text-gray-500">Cargando citas desde Google Sheets...</p>';
@@ -2400,21 +2701,37 @@ const renderTimeSlots = () => {
       "font-mono",
     );
 
-    if (isTimeSlotTaken(selectedDate, time)) {
+    // =====================================
+    // COMPROBAR CITA O BLOQUEO ADMIN
+    // =====================================
+
+    const slotTaken = isTimeSlotTaken(selectedDate, time);
+    const slotBlocked = isTimeSlotBlocked(selectedDate, time);
+
+    if (slotTaken || slotBlocked) {
       timeSlotEl.classList.add(
         "opacity-50",
         "cursor-not-allowed",
         "bg-gray-200",
         "text-gray-500",
       );
-      timeSlotEl.title = "Este horario ya está reservado";
+
+      // Diferenciar el motivo del bloqueo
+      if (slotBlocked) {
+        timeSlotEl.title = "Horario no disponible";
+      } else {
+        timeSlotEl.title = "Este horario ya está reservado";
+      }
     } else {
       timeSlotEl.addEventListener("click", () => {
         document
           .querySelectorAll(".time-slot")
           .forEach((el) => el.classList.remove("selected"));
+
         timeSlotEl.classList.add("selected");
+
         selectedTime = time;
+
         document.getElementById("confirm-appointment-btn").disabled = false;
       });
     }
