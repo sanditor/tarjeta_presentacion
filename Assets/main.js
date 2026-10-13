@@ -145,7 +145,7 @@ let clientName = "";
 let clientEmail = "";
 let appointmentSending = false;
 const APPOINTMENT_ENDPOINT =
-  "https://script.google.com/macros/s/AKfycbzRovk-eqgb1kHXPmZD-cEL0u_upvJ9icDslCQcZ6rEh1ybV-M3mDa8J0NOgzlqtwDjvg/exec";
+  "https://script.google.com/macros/s/AKfycbw47SnYxy9jhxH_qiw_26jhAm0StZCm4erWZIN0Au5jyO6pboxUt-nr9ASQFt188gUpzA/exec";
 
 // ---Agendador---
 let remoteAppointments = [];
@@ -310,29 +310,67 @@ const getColombiaHolidayName = (date) => {
 };
 
 const normalizeTime = (time) => {
-  if (!time && time !== 0) return "";
+
+  if (!time && time !== 0) {
+    return "";
+  }
+
   if (typeof time === "string") {
+
     const simpleTime = time.trim();
-    if (/^\d{2}:\d{2}(:\d{2})?$/.test(simpleTime)) {
-      return simpleTime.substring(0, 5);
+
+    // Acepta:
+    // 9:00
+    // 09:00
+    // 9:00:00
+    // 09:00:00
+    const match = simpleTime.match(
+      /^(\d{1,2}):(\d{2})(?::\d{2})?$/
+    );
+
+    if (match) {
+
+      const hour =
+        String(match[1]).padStart(2, "0");
+
+      const minute =
+        String(match[2]).padStart(2, "0");
+
+      return `${hour}:${minute}`;
     }
+
     const parsed = new Date(simpleTime);
+
     if (!isNaN(parsed.getTime())) {
-      return parsed.toLocaleTimeString("es-ES", {
+
+      return parsed.toLocaleTimeString(
+        "es-ES",
+        {
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        }
+      );
+    }
+
+    return simpleTime;
+  }
+
+  if (
+    time instanceof Date &&
+    !isNaN(time.getTime())
+  ) {
+
+    return time.toLocaleTimeString(
+      "es-ES",
+      {
         hour: "2-digit",
         minute: "2-digit",
         hour12: false,
-      });
-    }
-    return simpleTime;
+      }
+    );
   }
-  if (time instanceof Date && !isNaN(time.getTime())) {
-    return time.toLocaleTimeString("es-ES", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-  }
+
   return String(time);
 };
 
@@ -1047,6 +1085,132 @@ const fetchAppointmentsFromSheet = async (forceRefresh = false) => {
     return await appointmentsLoadingPromise;
   } finally {
     appointmentsLoadingPromise = null;
+  }
+};
+
+// =====================================================
+// CARGAR HORARIOS BLOQUEADOS DESDE GOOGLE SHEETS
+// =====================================================
+
+const fetchBlockedSlotsFromSheet = async () => {
+  if (!APPOINTMENT_ENDPOINT) {
+    console.error("APPOINTMENT_ENDPOINT no está definido.");
+    return remoteBlockedSlots;
+  }
+
+  const url =
+    `${APPOINTMENT_ENDPOINT}` + `?action=getBlockedSlots` + `&_=${Date.now()}`;
+
+  try {
+    const result = await requestAppsScript(url, {
+      retries: 2,
+      timeout: 12000,
+      useFetchFirst: false,
+    });
+
+    if (
+      !result ||
+      result.success !== true ||
+      !Array.isArray(result.blockedSlots)
+    ) {
+      throw new Error(
+        result?.error || "No fue posible obtener los horarios bloqueados.",
+      );
+    }
+
+    remoteBlockedSlots = result.blockedSlots.map((item) => ({
+      id: String(item.id || ""),
+      date: String(item.date || ""),
+      time: normalizeTime(item.time),
+      createdAt: String(item.createdAt || ""),
+    }));
+
+    remoteBlockedSlotsLoaded = true;
+
+    console.log(`Horarios bloqueados cargados: ${remoteBlockedSlots.length}`);
+
+    return remoteBlockedSlots;
+  } catch (error) {
+    console.error("Error cargando horarios bloqueados:", error);
+
+    return remoteBlockedSlots;
+  }
+};
+
+// =====================================================
+// OBTENER CLAVE PRIVADA DEL ADMINISTRADOR
+// =====================================================
+
+const getAdminBlockKey = () => {
+  let adminKey = sessionStorage.getItem("sandorAdminBlockKey") || "";
+
+  if (!adminKey) {
+    adminKey =
+      window.prompt("Ingresa tu clave privada de administrador:") || "";
+
+    adminKey = adminKey.trim();
+
+    if (!adminKey) {
+      return "";
+    }
+
+    // Solo se guarda durante esta sesión del navegador
+    sessionStorage.setItem("sandorAdminBlockKey", adminKey);
+  }
+
+  return adminKey;
+};
+
+// =====================================================
+// ENVIAR BLOQUEO / DESBLOQUEO A GOOGLE SHEETS
+// =====================================================
+
+const sendBlockedSlotsAction = async (action, date, times) => {
+  const adminKey = getAdminBlockKey();
+
+  if (!adminKey) {
+    return {
+      success: false,
+      cancelled: true,
+      error: "Operación cancelada.",
+    };
+  }
+
+  const params = new URLSearchParams({
+    action: action,
+    date: date,
+    times: times.join(","),
+    adminKey: adminKey,
+    _: String(Date.now()),
+  });
+
+  const url = `${APPOINTMENT_ENDPOINT}?${params.toString()}`;
+
+  try {
+    const result = await requestAppsScript(url, {
+      retries: 1,
+      timeout: 15000,
+      useFetchFirst: false,
+    });
+
+    // Si la contraseña es incorrecta,
+    // eliminarla para pedirla nuevamente
+    if (
+      result &&
+      result.success !== true &&
+      result.error === "No autorizado."
+    ) {
+      sessionStorage.removeItem("sandorAdminBlockKey");
+    }
+
+    return result;
+  } catch (error) {
+    console.error("Error administrando bloqueo:", error);
+
+    return {
+      success: false,
+      error: "No fue posible comunicarse con el servidor.",
+    };
   }
 };
 
@@ -2381,6 +2545,196 @@ const openAdminAvailabilityPanel = () => {
       });
     });
   });
+
+  // =====================================================
+  // OBTENER HORAS MARCADAS
+  // =====================================================
+
+  const getSelectedAdminTimes = () => {
+    return Array.from(
+      document.querySelectorAll(".admin-time-checkbox:checked"),
+    ).map((checkbox) => checkbox.value);
+  };
+
+  // =====================================================
+  // BOTÓN BLOQUEAR
+  // =====================================================
+
+  blockBtn.addEventListener("click", async () => {
+    const date = dateInput.value;
+
+    const times = getSelectedAdminTimes();
+
+    if (!date) {
+      showMessage("Selecciona primero una fecha.", "warning");
+
+      return;
+    }
+
+    if (times.length === 0) {
+      showMessage("Selecciona al menos un horario.", "warning");
+
+      return;
+    }
+
+    const originalText = blockBtn.innerHTML;
+
+    blockBtn.disabled = true;
+    unblockBtn.disabled = true;
+
+    blockBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Bloqueando...';
+
+    try {
+      const result = await sendBlockedSlotsAction("blockSlots", date, times);
+
+      if (!result || result.success !== true) {
+        if (!result?.cancelled) {
+          showMessage(
+            result?.error || "No fue posible bloquear los horarios.",
+            "error",
+          );
+        }
+
+        return;
+      }
+
+      // Volver a consultar Google Sheets
+      await fetchBlockedSlotsFromSheet();
+
+      // Si el calendario está mostrando
+      // precisamente esa fecha, actualizarlo
+      if (selectedDate && formatDateKey(selectedDate) === date) {
+        renderTimeSlots();
+      }
+
+      const blocked = Array.isArray(result.blocked) ? result.blocked : [];
+
+      const alreadyBlocked = Array.isArray(result.alreadyBlocked)
+        ? result.alreadyBlocked
+        : [];
+
+      const reserved = Array.isArray(result.reserved) ? result.reserved : [];
+
+      if (blocked.length > 0) {
+        showMessage(
+          `Horario(s) bloqueado(s): ${blocked.join(", ")}`,
+          "success",
+          5000,
+        );
+      } else if (alreadyBlocked.length > 0) {
+        showMessage(
+          "Los horarios seleccionados ya estaban bloqueados.",
+          "info",
+          5000,
+        );
+      } else if (reserved.length > 0) {
+        showMessage(
+          "No se pueden bloquear porque ya existen citas en esos horarios.",
+          "warning",
+          5000,
+        );
+      }
+
+      // Desmarcar casillas
+      document.querySelectorAll(".admin-time-checkbox").forEach((checkbox) => {
+        checkbox.checked = false;
+      });
+    } catch (error) {
+      console.error("Error bloqueando:", error);
+
+      showMessage("Ocurrió un error bloqueando los horarios.", "error");
+    } finally {
+      blockBtn.disabled = false;
+
+      unblockBtn.disabled = false;
+
+      blockBtn.innerHTML = originalText;
+    }
+  });
+
+  // =====================================================
+  // BOTÓN DESBLOQUEAR
+  // =====================================================
+
+  unblockBtn.addEventListener("click", async () => {
+    const date = dateInput.value;
+
+    const times = getSelectedAdminTimes();
+
+    if (!date) {
+      showMessage("Selecciona primero una fecha.", "warning");
+
+      return;
+    }
+
+    if (times.length === 0) {
+      showMessage("Selecciona al menos un horario.", "warning");
+
+      return;
+    }
+
+    const originalText = unblockBtn.innerHTML;
+
+    blockBtn.disabled = true;
+    unblockBtn.disabled = true;
+
+    unblockBtn.innerHTML =
+      '<i class="fas fa-spinner fa-spin"></i> Desbloqueando...';
+
+    try {
+      const result = await sendBlockedSlotsAction("unblockSlots", date, times);
+
+      if (!result || result.success !== true) {
+        if (!result?.cancelled) {
+          showMessage(
+            result?.error || "No fue posible desbloquear los horarios.",
+            "error",
+          );
+        }
+
+        return;
+      }
+
+      // Actualizar bloqueos locales
+      await fetchBlockedSlotsFromSheet();
+
+      // Actualizar inmediatamente
+      // el calendario si está en esa fecha
+      if (selectedDate && formatDateKey(selectedDate) === date) {
+        renderTimeSlots();
+      }
+
+      const unblocked = Array.isArray(result.unblocked) ? result.unblocked : [];
+
+      if (unblocked.length > 0) {
+        showMessage(
+          `Horario(s) desbloqueado(s): ${unblocked.join(", ")}`,
+          "success",
+          5000,
+        );
+      } else {
+        showMessage(
+          "Los horarios seleccionados no estaban bloqueados.",
+          "info",
+          5000,
+        );
+      }
+
+      document.querySelectorAll(".admin-time-checkbox").forEach((checkbox) => {
+        checkbox.checked = false;
+      });
+    } catch (error) {
+      console.error("Error desbloqueando:", error);
+
+      showMessage("Ocurrió un error desbloqueando los horarios.", "error");
+    } finally {
+      blockBtn.disabled = false;
+
+      unblockBtn.disabled = false;
+
+      unblockBtn.innerHTML = originalText;
+    }
+  });
 };
 
 //modal de agendamiento de citas
@@ -2537,6 +2891,8 @@ const openAgendarModal = async () => {
       '<p class="text-sm text-gray-500">Cargando citas desde Google Sheets...</p>';
   }
   await fetchAppointmentsFromSheet(false);
+  // traer también los horarios bloqueados
+  await fetchBlockedSlotsFromSheet();
   renderAgendaList(document.getElementById("agenda-list"));
 };
 
